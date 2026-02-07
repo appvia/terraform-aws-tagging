@@ -1,0 +1,21 @@
+Resources:
+  TaggingComplianceRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: ${config_rule_name}
+      Description: ${description}
+      Scope:
+        ComplianceResourceTypes: ${resource_types}
+      Source:
+        Owner: CUSTOM_LAMBDA
+        SourceIdentifier: ${lambda_function_arn}
+        SourceDetails:
+          - EventSource: aws.config
+            MessageType: ConfigurationItemChangeNotification
+          - EventSource: aws.config
+            MessageType: OversizedConfigurationItemChangeNotification
+          - EventSource: aws.config
+            MessageType: ScheduledNotification
+            MaximumExecutionFrequency: ${max_execution_frequency}
+      InputParameters:
+        DynamoDBTableArn: ${dynamodb_table_arn}

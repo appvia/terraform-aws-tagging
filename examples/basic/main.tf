@@ -3,3 +3,9 @@
 # per use-case. The code below should not be copied directly but referenced in order
 # to build your own root module that invokes this module
 #####################################################################################
+
+module "compliance" {
+  source = "../../"
+
+  dynamodb_table_name = "tagging-compliance"
+}

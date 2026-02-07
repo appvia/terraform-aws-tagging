@@ -1,0 +1,83 @@
+variable "cloudwatch_logs_kms_key_id" {
+  description = "The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted."
+  type        = string
+  default     = null
+}
+
+variable "cloudwatch_logs_log_group_class" {
+  description = "The log group class for CloudWatch Logs. Valid values are STANDARD and INFREQUENT_ACCESS."
+  type        = string
+  default     = "STANDARD"
+}
+
+variable "cloudwatch_logs_retention_in_days" {
+  description = "The number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827."
+  type        = number
+  default     = 7
+}
+
+variable "dynamodb_table_arn" {
+  description = "The ARN of the DynamoDB table to store tags for AWS resources."
+  type        = string
+}
+
+variable "config_max_execution_frequency" {
+  description = "The maximum frequency with which the AWS Config rule should be evaluated. Valid values are One_Hour, Three_Hours, Six_Hours, Twelve_Hours, or TwentyFour_Hours."
+  type        = string
+  default     = "TwentyFour_Hours"
+}
+
+variable "config_name" {
+  description = "The name of the AWS Config rule"
+  type        = string
+  default     = "tagging-compliance"
+}
+
+variable "config_resource_types" {
+  description = "List of AWS resource types to evaluate"
+  type        = list(string)
+  default     = ["*"]
+}
+
+
+variable "lambda_description" {
+  description = "The description of the Lambda function to handle AWS Organization account movements."
+  type        = string
+  default     = "Handles AWS Organization account movements for tagging compliance."
+}
+
+variable "lambda_log_level" {
+  description = "The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL."
+  type        = string
+  default     = "INFO"
+}
+
+variable "lambda_name" {
+  description = "The name of the Lambda function to handle AWS Organization account movements."
+  type        = string
+  default     = "tagging-compliance-handler"
+}
+
+variable "lambda_role_name" {
+  description = "The name of the IAM role to be created for the Lambda function."
+  type        = string
+  default     = "tagging-compliance-lambda"
+}
+
+variable "lambda_runtime" {
+  description = "The runtime environment for the Lambda function."
+  type        = string
+  default     = "python3.12"
+}
+
+variable "lambda_timeout" {
+  description = "The timeout for the Lambda function in seconds."
+  type        = number
+  default     = 30
+}
+
+variable "tags" {
+  description = "A map of tags to apply to the Lambda function."
+  type        = map(string)
+  default     = {}
+}

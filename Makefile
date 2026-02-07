@@ -12,7 +12,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-.PHONY: all security lint format documentation documentation-examples validate-all validate validate-examples init examples tests
+.PHONY: all security lint format documentation documentation-examples validate-all validate validate-examples init examples tests python-tests
 
 default: all
 
@@ -101,6 +101,15 @@ tests:
 	@echo "--> Running Terraform Tests"
 	@terraform test
 
+python-tests:
+	@echo "--> Running Python tests"
+	@if command -v pytest >/dev/null 2>&1; then \
+		pytest modules/validation/assets/handler_test.py -v; \
+	else \
+		echo "pytest not found. Install with: pip install pytest"; \
+		exit 1; \
+	fi
+
 validate:
 	@echo "--> Running terraform validate"
 	@terraform init -backend=false
@@ -139,7 +148,7 @@ lint:
 
 lint-modules:
 	@echo "--> Running tflint on modules"
-	@find . -type d -regex '.*/modules/[a-zA-Z\-_$$]*' -not -path '*.terraform*' 2>/dev/null | while read -r dir; do \
+	@find . -type d -regex '.*/modules/.*' -depth 2 -not -path '*.terraform*' 2>/dev/null | while read -r dir; do \
 		echo "--> Linting $$dir"; \
 		tflint --chdir=$$dir --init; \
 		tflint --chdir=$$dir -f compact; \
@@ -154,8 +163,21 @@ lint-examples:
 	done;
 
 format:
+	$(MAKE) format-terraform
+	$(MAKE) format-python
+
+format-terraform:
 	@echo "--> Running terraform fmt"
 	@terraform fmt -recursive -write=true
+
+format-python:
+	@echo "--> Running black for Python formatting"
+	@if command -v black >/dev/null 2>&1; then \
+		black .; \
+	else \
+		echo "black not found. Install with: pip install black"; \
+		exit 1; \
+	fi
 
 clean:
 	@echo "--> Cleaning up"
