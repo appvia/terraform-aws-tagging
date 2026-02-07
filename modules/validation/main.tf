@@ -21,22 +21,6 @@ data "aws_iam_policy_document" "permissions" {
   }
 }
 
-## Craft a assume policy for the lambda function role
-data "aws_iam_policy_document" "assume_role" {
-  statement {
-    sid     = "AllowLambdaServiceAssumeRole"
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type = "Service"
-      identifiers = [
-        "config.amazonaws.com",
-        "lambda.amazonaws.com",
-      ]
-    }
-  }
-}
-
 ## Lambda function that used to handle the aws config rule
 module "lambda_function" {
   source  = "terraform-aws-modules/lambda/aws"

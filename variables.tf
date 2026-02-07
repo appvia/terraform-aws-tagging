@@ -11,6 +11,18 @@ variable "dynamodb_table_name" {
   default     = "tagging-compliance"
 }
 
+variable "dynamodb_table_kms_key_id" {
+  description = "KMS key ID for DynamoDB table encryption (optional)"
+  type        = string
+  default     = null
+}
+
+variable "dynamodb_table_point_in_time_recovery_enabled" {
+  description = "Enable point-in-time recovery for the DynamoDB table"
+  type        = bool
+  default     = false
+}
+
 variable "organization_id" {
   description = "The ID of the AWS Organization to allow access to the DynamoDB table."
   type        = string

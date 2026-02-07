@@ -5,6 +5,19 @@ resource "aws_dynamodb_table" "compliance" {
   hash_key     = "ResourceType"
   tags         = var.tags
 
+  dynamic "server_side_encryption" {
+    for_each = var.dynamodb_table_kms_key_id == null ? [] : [1]
+
+    content {
+      enabled     = true
+      kms_key_arn = var.dynamodb_table_kms_key_id
+    }
+  }
+
+  point_in_time_recovery {
+    enabled = var.dynamodb_table_point_in_time_recovery_enabled
+  }
+
   ## Define all the fields for the dynamodb table
   dynamic "attribute" {
     for_each = local.compliance_fields

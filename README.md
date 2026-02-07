@@ -656,7 +656,9 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_dynamodb_billing_mode"></a> [dynamodb\_billing\_mode](#input\_dynamodb\_billing\_mode) | The billing mode for the DynamoDB table. Valid values are PROVISIONED and PAY\_PER\_REQUEST. | `string` | `"PAY_PER_REQUEST"` | no |
+| <a name="input_dynamodb_table_kms_key_id"></a> [dynamodb\_table\_kms\_key\_id](#input\_dynamodb\_table\_kms\_key\_id) | KMS key ID for DynamoDB table encryption (optional) | `string` | `null` | no |
 | <a name="input_dynamodb_table_name"></a> [dynamodb\_table\_name](#input\_dynamodb\_table\_name) | The name of the DynamoDB table to store tags for AWS resources. | `string` | `"tagging-compliance"` | no |
+| <a name="input_dynamodb_table_point_in_time_recovery_enabled"></a> [dynamodb\_table\_point\_in\_time\_recovery\_enabled](#input\_dynamodb\_table\_point\_in\_time\_recovery\_enabled) | Enable point-in-time recovery for the DynamoDB table | `bool` | `false` | no |
 | <a name="input_organization_id"></a> [organization\_id](#input\_organization\_id) | The ID of the AWS Organization to allow access to the DynamoDB table. | `string` | `null` | no |
 | <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds   = optional(list(string), ["*"])<br/>    Enabled      = optional(bool, true)<br/>    Required     = optional(bool, true)<br/>    ResourceType = string<br/>    RuleId       = string<br/>    Tag          = string<br/>    ValuePattern = optional(string, null)<br/>    Values       = optional(list(string), [])<br/>  }))</pre> | `[]` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to the DynamoDB table. | `map(string)` | `{}` | no |

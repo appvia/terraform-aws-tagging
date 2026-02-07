@@ -405,6 +405,9 @@ The `terraform-docs` utility is used to generate documentation. Follow these ste
 |------|-------------|------|---------|:--------:|
 | <a name="input_dynamodb_table_arn"></a> [dynamodb\_table\_arn](#input\_dynamodb\_table\_arn) | ARN of the DynamoDB table containing compliance rules | `string` | n/a | yes |
 | <a name="input_s3_bucket_name"></a> [s3\_bucket\_name](#input\_s3\_bucket\_name) | Name of the S3 bucket to store the conformance pack template | `string` | n/a | yes |
+| <a name="input_cloudwatch_logs_kms_key_id"></a> [cloudwatch\_logs\_kms\_key\_id](#input\_cloudwatch\_logs\_kms\_key\_id) | KMS key ID for encrypting CloudWatch Logs (optional) | `string` | `null` | no |
+| <a name="input_cloudwatch_logs_log_group_class"></a> [cloudwatch\_logs\_log\_group\_class](#input\_cloudwatch\_logs\_log\_group\_class) | Log group class for CloudWatch Logs. Valid values are STANDARD and INFREQUENT\_ACCESS. | `string` | `"STANDARD"` | no |
+| <a name="input_cloudwatch_logs_retention_in_days"></a> [cloudwatch\_logs\_retention\_in\_days](#input\_cloudwatch\_logs\_retention\_in\_days) | Number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827. | `number` | `7` | no |
 | <a name="input_config_rule_name"></a> [config\_rule\_name](#input\_config\_rule\_name) | Name of the AWS Config rule within the conformance pack | `string` | `"tagging-compliance"` | no |
 | <a name="input_conformance_pack_name"></a> [conformance\_pack\_name](#input\_conformance\_pack\_name) | Name of the AWS Config Conformance Pack | `string` | `"tagging-compliance"` | no |
 | <a name="input_deploy_organization_wide"></a> [deploy\_organization\_wide](#input\_deploy\_organization\_wide) | Whether to deploy the conformance pack organization-wide (requires Organizations management account) | `bool` | `false` | no |

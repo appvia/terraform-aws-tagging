@@ -29,6 +29,21 @@ resource "aws_s3_bucket_public_access_block" "conformance_pack" {
   restrict_public_buckets = true
 }
 
+## Enable default encryption for the conformance pack bucket
+resource "aws_s3_bucket_default_encryption" "conformance_pack" {
+  count = var.s3_kms_key_id == null ? 1 : 0
+
+  bucket = aws_s3_bucket.conformance_pack.id
+
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm = "AES256"
+      }
+    }
+  }
+}
+
 ## Enable encryption for the conformance pack bucket
 resource "aws_s3_bucket_server_side_encryption_configuration" "conformance_pack" {
   count  = var.s3_kms_key_id != null ? 1 : 0
@@ -53,7 +68,7 @@ resource "aws_s3_object" "conformance_pack_template" {
     config_rule_name        = var.config_rule_name
     description             = var.pack_description
     dynamodb_table_arn      = var.dynamodb_table_arn
-    lambda_function_arn     = var.lambda_function_arn
+    lambda_function_arn     = local.lambda_arn
     max_execution_frequency = var.max_execution_frequency
     resource_types          = jsonencode(var.resource_types)
   })
@@ -62,7 +77,7 @@ resource "aws_s3_object" "conformance_pack_template" {
     config_rule_name        = var.config_rule_name
     description             = var.pack_description
     dynamodb_table_arn      = var.dynamodb_table_arn
-    lambda_function_arn     = var.lambda_function_arn
+    lambda_function_arn     = local.lambda_arn
     max_execution_frequency = var.max_execution_frequency
     resource_types          = jsonencode(var.resource_types)
   }))

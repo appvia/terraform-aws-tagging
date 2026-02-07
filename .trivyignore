@@ -1,0 +1,14 @@
+AWS-0024 # https://avd.aquasec.com/misconfig/aws-0024
+AWS-0025 # https://avd.aquasec.com/misconfig/aws/dynamodb/aws-0025/
+AWS-0066 # https://avd.aquasec.com/misconfig/aws/lambda/aws-0066/
+AWS-0067 # https://avd.aquasec.com/misconfig/aws/lambda/aws-0067/
+AWS-0088 # http://avd.aquasec.com/misconfig/aws/s3/aws-0088/
+AWS-0089 # https://avd.aquasec.com/misconfig/aws-0089
+AWS-0132 # https://avd.aquasec.com/misconfig/aws-0132
+AVD-AWS-0024 # https://avd.aquasec.com/misconfig/aws-0024
+AVD-AWS-0025 # https://avd.aquasec.com/misconfig/aws/dynamodb/aws-0025/
+AVD-AWS-0066 # https://avd.aquasec.com/misconfig/aws/lambda/aws-0066/
+AVD-AWS-0067 # https://avd.aquasec.com/misconfig/aws/lambda/aws-0067/
+AVD-AWS-0088 # http://avd.aquasec.com/misconfig/aws/s3/aws-0088/
+AVD-AWS-0089 # https://avd.aquasec.com/misconfig/aws-0089
+AVD-AWS-0132 # https://avd.aquasec.com/misconfig/aws-0132

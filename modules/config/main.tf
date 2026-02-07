@@ -22,6 +22,7 @@ resource "aws_lambda_permission" "allow_config" {
   function_name = module.lambda_function.lambda_name
   principal     = "config.amazonaws.com"
   statement_id  = "AllowExecutionFromConfig"
+  source_arn    = "arn:aws:config:*:${local.account_id}:config-rule/${var.config_name}"
 }
 
 ## Provision a custom aws config rule to invoke the lambda function for tagging compliance
