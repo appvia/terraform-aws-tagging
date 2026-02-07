@@ -18,8 +18,8 @@ module "lambda_function" {
 
 ## Provision a custom aws config rule to invoke the lambda function for tagging compliance
 resource "aws_config_config_rule" "tagging_compliance" {
-  name                        = var.config_name
-  description                 = "Custom AWS Config rule to evaluate tagging compliance using a Lambda function."
+  name        = var.config_name
+  description = "Custom AWS Config rule to evaluate tagging compliance using a Lambda function."
 
   scope {
     compliance_resource_types = var.config_resource_types
