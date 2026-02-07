@@ -276,9 +276,9 @@ class TestEvaluations:
         assert evaluations.Evaluations[0] == evaluation
 
     def test_non_applicable_method(self):
-        """Test non_applicable() adds a NOT_APPLICABLE evaluation."""
+        """Test add_not_applicable() adds a NOT_APPLICABLE evaluation."""
         evaluations = handler.Evaluations(Evaluations=[])
-        evaluations.non_applicable("Resource not applicable")
+        evaluations.add_not_applicable("Resource not applicable")
         assert len(evaluations.Evaluations) == 1
         assert (
             evaluations.Evaluations[0].Compliant
@@ -287,11 +287,16 @@ class TestEvaluations:
         assert evaluations.Evaluations[0].Annotation == "Resource not applicable"
 
     def test_non_compliant_method(self):
-        """Test non_compliant() adds a NON_COMPLIANT evaluation."""
+        """Test add_non_compliant() adds a NON_COMPLIANT evaluation."""
         evaluations = handler.Evaluations(Evaluations=[])
-        evaluations.non_compliant(
+        rule = handler.Rule(
+            RuleId="test-rule",
+            Tag="Environment",
+            ResourceType="AWS::EC2::*",
+        )
+        evaluations.add_non_compliant(
             annotation="Tag value not permitted",
-            tag="Environment",
+            rule=rule,
             value="Invalid",
         )
         assert len(evaluations.Evaluations) == 1
@@ -302,6 +307,7 @@ class TestEvaluations:
         assert evaluations.Evaluations[0].TagKey == "Environment"
         assert evaluations.Evaluations[0].TagValue == "Invalid"
         assert evaluations.Evaluations[0].Annotation == "Tag value not permitted"
+        assert evaluations.Evaluations[0].RuleId == "test-rule"
 
 
 # ============================================================================

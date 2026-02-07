@@ -21,12 +21,6 @@ variable "dynamodb_table_arn" {
   type        = string
 }
 
-variable "config_max_execution_frequency" {
-  description = "The maximum frequency with which the AWS Config rule should be evaluated. Valid values are One_Hour, Three_Hours, Six_Hours, Twelve_Hours, or TwentyFour_Hours."
-  type        = string
-  default     = "TwentyFour_Hours"
-}
-
 variable "config_name" {
   description = "The name of the AWS Config rule"
   type        = string
@@ -34,11 +28,10 @@ variable "config_name" {
 }
 
 variable "config_resource_types" {
-  description = "List of AWS resource types to evaluate"
+  description = "List of AWS resource types to evaluate (https://docs.aws.amazon.com/config/latest/developerguide/resource-config-reference.html)"
   type        = list(string)
   default     = ["*"]
 }
-
 
 variable "lambda_description" {
   description = "The description of the Lambda function to handle AWS Organization account movements."
@@ -55,13 +48,13 @@ variable "lambda_log_level" {
 variable "lambda_name" {
   description = "The name of the Lambda function to handle AWS Organization account movements."
   type        = string
-  default     = "tagging-compliance-handler"
+  default     = "tagging-compliance"
 }
 
 variable "lambda_role_name" {
   description = "The name of the IAM role to be created for the Lambda function."
   type        = string
-  default     = "tagging-compliance-lambda"
+  default     = "tagging-compliance"
 }
 
 variable "lambda_runtime" {

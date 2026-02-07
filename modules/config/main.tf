@@ -16,20 +16,10 @@ module "lambda_function" {
   tags                              = var.tags
 }
 
-## Provision a permission to allow aws config to invoke the lambda function
-resource "aws_lambda_permission" "allow_config" {
-  action        = "lambda:InvokeFunction"
-  function_name = module.lambda_function.lambda_name
-  principal     = "config.amazonaws.com"
-  statement_id  = "AllowExecutionFromConfig"
-  source_arn    = "arn:aws:config:*:${local.account_id}:config-rule/${var.config_name}"
-}
-
 ## Provision a custom aws config rule to invoke the lambda function for tagging compliance
 resource "aws_config_config_rule" "tagging_compliance" {
   name                        = var.config_name
   description                 = "Custom AWS Config rule to evaluate tagging compliance using a Lambda function."
-  maximum_execution_frequency = var.config_max_execution_frequency
 
   scope {
     compliance_resource_types = var.config_resource_types
@@ -38,9 +28,18 @@ resource "aws_config_config_rule" "tagging_compliance" {
   source {
     owner             = "CUSTOM_LAMBDA"
     source_identifier = module.lambda_function.lambda_arn
+
+    source_detail {
+      event_source = "aws.config"
+      message_type = "ConfigurationItemChangeNotification"
+    }
+    source_detail {
+      event_source = "aws.config"
+      message_type = "OversizedConfigurationItemChangeNotification"
+    }
   }
 
   depends_on = [
-    aws_lambda_permission.allow_config,
+    module.lambda_function,
   ]
 }

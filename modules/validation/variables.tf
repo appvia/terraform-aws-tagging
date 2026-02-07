@@ -36,13 +36,13 @@ variable "lambda_log_level" {
 variable "lambda_name" {
   description = "The name of the Lambda function to handle AWS Organization account movements."
   type        = string
-  default     = "tagging-compliance-handler"
+  default     = "tagging-compliance"
 }
 
 variable "lambda_role_name" {
   description = "The name of the IAM role to be created for the Lambda function."
   type        = string
-  default     = "tagging-compliance-lambda"
+  default     = "tagging-compliance"
 }
 
 variable "lambda_runtime" {

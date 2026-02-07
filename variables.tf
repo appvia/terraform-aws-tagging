@@ -23,6 +23,24 @@ variable "dynamodb_table_point_in_time_recovery_enabled" {
   default     = false
 }
 
+variable "dynamodb_table_read_capacity" {
+  description = "The read capacity units for the DynamoDB table (only applicable if billing mode is PROVISIONED)"
+  type        = number
+  default     = null
+}
+
+variable "dynamodb_table_write_capacity" {
+  description = "The write capacity units for the DynamoDB table (only applicable if billing mode is PROVISIONED)"
+  type        = number
+  default     = null
+}
+
+variable "enable_organization_access" {
+  description = "Whether to allow access to the DynamoDB table from the AWS Organization."
+  type        = bool
+  default     = true
+}
+
 variable "organization_id" {
   description = "The ID of the AWS Organization to allow access to the DynamoDB table."
   type        = string

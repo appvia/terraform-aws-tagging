@@ -1,9 +1,12 @@
 ## Provision a Dynamodb table to store tags for AWS resources
 resource "aws_dynamodb_table" "compliance" {
-  name         = var.dynamodb_table_name
-  billing_mode = var.dynamodb_billing_mode
-  hash_key     = "ResourceType"
-  tags         = var.tags
+  name           = var.dynamodb_table_name
+  billing_mode   = var.dynamodb_billing_mode
+  hash_key       = "ResourceType"
+  range_key      = "RuleId"
+  read_capacity  = var.dynamodb_table_read_capacity
+  tags           = var.tags
+  write_capacity = var.dynamodb_table_write_capacity
 
   dynamic "server_side_encryption" {
     for_each = var.dynamodb_table_kms_key_id == null ? [] : [1]
@@ -18,13 +21,14 @@ resource "aws_dynamodb_table" "compliance" {
     enabled = var.dynamodb_table_point_in_time_recovery_enabled
   }
 
-  ## Define all the fields for the dynamodb table
-  dynamic "attribute" {
-    for_each = local.compliance_fields
-    content {
-      name = attribute.key
-      type = attribute.value
-    }
+  attribute {
+    name = "ResourceType"
+    type = "S"
+  }
+
+  attribute {
+    name = "RuleId"
+    type = "S"
   }
 }
 
@@ -34,19 +38,42 @@ data "aws_iam_policy_document" "dynamodb_access" {
     sid    = "AllowOrganizationAccessToDynamoDBTable"
     effect = "Allow"
     actions = [
-      "dynamodb:GetItem",
-      "dynamodb:GetItems",
+      "dynamodb:Get*",
       "dynamodb:Scan",
     ]
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
     resources = [
       aws_dynamodb_table.compliance.arn,
     ]
 
-    condition {
-      test     = "StringEquals"
-      variable = "aws:PrincipalOrgID"
-      values   = [local.organization_id]
+    dynamic "condition" {
+      for_each = var.enable_organization_access ? [1] : []
+
+      content {
+        test     = "StringEquals"
+        variable = "aws:PrincipalOrgID"
+        values   = [local.organization_id]
+      }
     }
+  }
+
+  statement {
+    sid    = "AllowAccountAccessToDynamoDBTable"
+    effect = "Allow"
+    actions = [
+      "dynamodb:Get*",
+      "dynamodb:Scan",
+    ]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${local.account_id}:root"]
+    }
+    resources = [
+      aws_dynamodb_table.compliance.arn,
+    ]
   }
 }
 
@@ -63,4 +90,9 @@ module "compliance_rules" {
 
   dynamodb_table_name = aws_dynamodb_table.compliance.name
   rules               = var.rules
+
+  depends_on = [
+    aws_dynamodb_table.compliance,
+    aws_dynamodb_resource_policy.compliance,
+  ]
 }

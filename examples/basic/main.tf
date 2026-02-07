@@ -4,8 +4,43 @@
 # to build your own root module that invokes this module
 #####################################################################################
 
+## Provision the compliance rules in the DynamoDB table
 module "compliance" {
   source = "../../"
 
+  ## The name of the DynamoDB table to store tags for AWS resources.
   dynamodb_table_name = "tagging-compliance"
+  ## Collection of compliance rules to be stored in the DynamoDB table.
+  rules = [
+    {
+      RuleId       = "ec2-tagging-rule"
+      ResourceType = "AWS::EC2::*"
+      Tag          = "Environment"
+      Values       = ["Development"]
+      AccountIds   = ["*"]
+    },
+    {
+      RuleId       = "s3-tagging-rule"
+      ResourceType = "AWS::S3::*"
+      Tag          = "Environment"
+      AccountIds   = ["*"]
+    }
+  ]
+}
+
+## Provision the AWS Config rule to evaluate compliance of AWS 
+## resources with the rules stored in the DynamoDB table
+module "config" {
+  source = "../../modules/config"
+
+  ## The name of the DynamoDB table to store tags for AWS resources. 
+  dynamodb_table_arn = module.compliance.dynamodb_arn
+  ## The name of the AWS Config rule to create
+  config_name = "tagging-compliance"
+  ## The resource types to evaluate for compliance
+  config_resource_types = ["AWS::S3::Bucket"]
+
+  depends_on = [
+    module.compliance,
+  ]
 }

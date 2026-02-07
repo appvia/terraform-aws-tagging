@@ -659,6 +659,9 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 | <a name="input_dynamodb_table_kms_key_id"></a> [dynamodb\_table\_kms\_key\_id](#input\_dynamodb\_table\_kms\_key\_id) | KMS key ID for DynamoDB table encryption (optional) | `string` | `null` | no |
 | <a name="input_dynamodb_table_name"></a> [dynamodb\_table\_name](#input\_dynamodb\_table\_name) | The name of the DynamoDB table to store tags for AWS resources. | `string` | `"tagging-compliance"` | no |
 | <a name="input_dynamodb_table_point_in_time_recovery_enabled"></a> [dynamodb\_table\_point\_in\_time\_recovery\_enabled](#input\_dynamodb\_table\_point\_in\_time\_recovery\_enabled) | Enable point-in-time recovery for the DynamoDB table | `bool` | `false` | no |
+| <a name="input_dynamodb_table_read_capacity"></a> [dynamodb\_table\_read\_capacity](#input\_dynamodb\_table\_read\_capacity) | The read capacity units for the DynamoDB table (only applicable if billing mode is PROVISIONED) | `number` | `null` | no |
+| <a name="input_dynamodb_table_write_capacity"></a> [dynamodb\_table\_write\_capacity](#input\_dynamodb\_table\_write\_capacity) | The write capacity units for the DynamoDB table (only applicable if billing mode is PROVISIONED) | `number` | `null` | no |
+| <a name="input_enable_organization_access"></a> [enable\_organization\_access](#input\_enable\_organization\_access) | Whether to allow access to the DynamoDB table from the AWS Organization. | `bool` | `true` | no |
 | <a name="input_organization_id"></a> [organization\_id](#input\_organization\_id) | The ID of the AWS Organization to allow access to the DynamoDB table. | `string` | `null` | no |
 | <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds   = optional(list(string), ["*"])<br/>    Enabled      = optional(bool, true)<br/>    Required     = optional(bool, true)<br/>    ResourceType = string<br/>    RuleId       = string<br/>    Tag          = string<br/>    ValuePattern = optional(string, null)<br/>    Values       = optional(list(string), [])<br/>  }))</pre> | `[]` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to the DynamoDB table. | `map(string)` | `{}` | no |
@@ -668,5 +671,6 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 | Name | Description |
 |------|-------------|
 | <a name="output_dynamodb_arn"></a> [dynamodb\_arn](#output\_dynamodb\_arn) | The ARN of the DynamoDB table used for tagging compliance. |
+| <a name="output_dynamodb_name"></a> [dynamodb\_name](#output\_dynamodb\_name) | The name of the DynamoDB table used for tagging compliance. |
 | <a name="output_organization_id"></a> [organization\_id](#output\_organization\_id) | The ID of the AWS Organization allowed access to the DynamoDB table. |
 <!-- END_TF_DOCS -->

@@ -159,7 +159,7 @@ class Evaluations:
 
         self.Evaluations.append(evaluation)
 
-    def non_applicable(
+    def add_not_applicable(
         self,
         annotation: str | None = None,
         rule_id: str | None = None,
@@ -174,21 +174,36 @@ class Evaluations:
             )
         )
 
-    def non_compliant(
+    def add_compliant(
         self,
         annotation: str,
-        tag: str | None = None,
+        rule: Rule,
+    ) -> None:
+        """Mark the resource as compliant for tagging compliance with an annotation."""
+
+        self.add(
+            Evaluation(
+                Annotation=annotation,
+                Compliant=COMPLIANCE_TYPE_COMPLIANT,
+                RuleId=rule.RuleId,
+                TagKey=rule.Tag,
+            )
+        )
+
+    def add_non_compliant(
+        self,
+        annotation: str,
+        rule: Rule,
         value: str | None = None,
-        rule_id: str | None = None,
     ) -> None:
         """Mark the resource as non-compliant for tagging compliance with an annotation."""
         self.add(
             Evaluation(
                 Annotation=annotation,
                 Compliant=COMPLIANCE_TYPE_NON_COMPLIANT,
-                RuleId=rule_id or "",
-                TagKey=tag or "",
-                TagValue=value or "",
+                RuleId=rule.RuleId,
+                TagKey=rule.Tag,
+                TagValue=value,
             )
         )
 
@@ -295,6 +310,33 @@ logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
 class _JSONFormatter(logging.Formatter):
     """Emit each log record as a single JSON object."""
 
+    # Standard fields that are part of every LogRecord
+    _STANDARD_RECORD_FIELDS = {
+        "name",
+        "msg",
+        "args",
+        "created",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "module",
+        "msecs",
+        "message",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "asctime",
+        "taskName",
+    }
+
     def format(self, record: logging.LogRecord) -> str:
         log_entry: dict[str, Any] = {
             "timestamp": self.formatTime(record, self.datefmt),
@@ -302,6 +344,12 @@ class _JSONFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+
+        # Include extra fields from the record
+        for key, value in record.__dict__.items():
+            if key not in self._STANDARD_RECORD_FIELDS:
+                log_entry[key] = value
+
         if record.exc_info and record.exc_info[0] is not None:
             log_entry["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_entry, default=str)
@@ -447,32 +495,32 @@ def validate_compliance(
         tag = rule.Tag
         # Check if the tag is present on the resource and get its value (or null if not present)
         if not resource.contains(tag) and rule.Required:
-            conditions.non_compliant("Required tag is missing", tag=tag)
+            conditions.add_non_compliant(
+                annotation="Required tag is missing",
+                rule=rule,
+            )
 
         if resource.contains(tag):
             if rule.has_values() and not resource.is_value(tag, rule.Values):
-                conditions.non_compliant(
-                    f"Tag value does not match any of the permitted values: {rule.Values}",
-                    tag=tag,
+                conditions.add_non_compliant(
+                    annotation=f"Tag value does not match any of the permitted values: {rule.Values}",
+                    rule=rule,
                     value=resource.Tags[tag],
                 )
 
             if rule.has_value_pattern() and not resource.is_value_pattern(
                 tag, rule.ValuePattern
             ):
-                conditions.non_compliant(
-                    f"Tag value does not match the required pattern: {rule.ValuePattern}",
-                    tag=tag,
+                conditions.add_non_compliant(
+                    annotation=f"Tag value does not match the required pattern: {rule.ValuePattern}",
+                    rule=rule,
                     value=resource.Tags[tag],
                 )
         elif not rule.Required and not resource.contains(tag):
             # For optional tags that are not present, mark as compliant
-            conditions.add(
-                Evaluation(
-                    Compliant=COMPLIANCE_TYPE_COMPLIANT,
-                    TagKey=tag,
-                    Annotation="Optional tag not present (compliant)",
-                )
+            conditions.add_compliant(
+                annotation="Optional tag not present (compliant)",
+                rule=rule,
             )
 
     logger.info(
@@ -488,11 +536,12 @@ def validate_compliance(
 
     # If no evaluations were added (all required tags are present and valid), mark as compliant
     if not conditions.Evaluations:
-        conditions.add(
-            Evaluation(
-                Compliant=COMPLIANCE_TYPE_COMPLIANT,
-                Annotation="All required tags are present and valid",
-            )
+        conditions.add_compliant(
+            annotation="All required tags are present and valid",
+            rule=Rule(
+                RuleId="all_required_tags_present",
+                Required=True,
+            ),
         )
 
     return conditions
@@ -605,8 +654,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
             },
         )
         # We have nothing to evaluate, so we return NOT_APPLICABLE for this resource and exit early.
-        evaluations.non_applicable(
-            "Resource has been deleted, ignoring tagging compliance."
+        evaluations.add_not_applicable(
+            annotation="Resource has been deleted, ignoring tagging compliance."
         )
 
     else:
@@ -625,8 +674,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
                     "resource_type": resource.ResourceType,
                 },
             )
-            evaluations.non_applicable(
-                "No applicable tagging rules found for this resource type."
+            evaluations.add_not_applicable(
+                annotation="No applicable tagging rules found for this resource type."
             )
         else:
             # Evaluate the resource against the matching rules and determine compliance.
@@ -648,7 +697,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
         for evaluation in evaluations.Evaluations:
             if evaluation.Compliant == COMPLIANCE_TYPE_NON_COMPLIANT:
                 logger.info(
-                    "Resource is non-compliant with tagging rul",
+                    "Resource is non-compliant with tagging rule",
                     extra={
                         "action": "lambda_handler",
                         "account_id": resource.AccountId,

@@ -29,29 +29,13 @@ resource "aws_s3_bucket_public_access_block" "conformance_pack" {
   restrict_public_buckets = true
 }
 
-## Enable default encryption for the conformance pack bucket
-resource "aws_s3_bucket_default_encryption" "conformance_pack" {
-  count = var.s3_kms_key_id == null ? 1 : 0
-
-  bucket = aws_s3_bucket.conformance_pack.id
-
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        sse_algorithm = "AES256"
-      }
-    }
-  }
-}
-
 ## Enable encryption for the conformance pack bucket
 resource "aws_s3_bucket_server_side_encryption_configuration" "conformance_pack" {
-  count  = var.s3_kms_key_id != null ? 1 : 0
   bucket = aws_s3_bucket.conformance_pack.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
+      sse_algorithm     = var.s3_kms_key_id == null ? "AES256" : "aws:kms"
       kms_master_key_id = var.s3_kms_key_id
     }
   }
