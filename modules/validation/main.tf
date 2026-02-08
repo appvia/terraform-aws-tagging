@@ -24,13 +24,14 @@ data "aws_iam_policy_document" "permissions" {
 ## Lambda function that used to handle the aws config rule
 module "lambda_function" {
   source  = "terraform-aws-modules/lambda/aws"
-  version = "8.2.0"
+  version = "8.5.0"
 
   function_name                = var.lambda_name
   function_tags                = var.tags
   description                  = var.lambda_description
   handler                      = "handler.lambda_handler"
   hash_extra                   = "tagging_compliance"
+  memory_size                  = var.lambda_memory_size
   runtime                      = var.lambda_runtime
   source_path                  = "${path.module}/assets/handler.py"
   tags                         = merge(var.tags, { "Name" = var.lambda_name })
@@ -39,9 +40,11 @@ module "lambda_function" {
 
   ## Environment variables for the Lambda function
   environment_variables = {
-    ACCOUNT_ID = local.account_id
-    LOG_LEVEL  = var.lambda_log_level
-    TABLE_ARN  = var.dynamodb_table_arn
+    ACCOUNT_ID              = local.account_id
+    LOG_LEVEL               = var.lambda_log_level
+    RULES_CACHE_ENABLED     = var.rules_cache_enabled ? "true" : "false"
+    RULES_CACHE_TTL_SECONDS = tostring(var.rules_cache_ttl_seconds)
+    TABLE_ARN               = var.dynamodb_table_arn
   }
 
   ## Lambda Role

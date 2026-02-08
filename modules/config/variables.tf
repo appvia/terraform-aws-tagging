@@ -45,6 +45,12 @@ variable "lambda_log_level" {
   default     = "INFO"
 }
 
+variable "lambda_memory_size" {
+  description = "The amount of memory in MB allocated to the Lambda function."
+  type        = number
+  default     = 128
+}
+
 variable "lambda_name" {
   description = "The name of the Lambda function to handle AWS Organization account movements."
   type        = string
@@ -67,6 +73,23 @@ variable "lambda_timeout" {
   description = "The timeout for the Lambda function in seconds."
   type        = number
   default     = 30
+}
+
+variable "rules_cache_enabled" {
+  description = "Enable or disable caching of compliance rules in Lambda function memory. When enabled, rules are cached between invocations to reduce DynamoDB read costs and improve performance."
+  type        = bool
+  default     = true
+}
+
+variable "rules_cache_ttl_seconds" {
+  description = "Time-to-live (TTL) in seconds for cached compliance rules. After this period, the cache expires and rules are re-fetched from DynamoDB. Default is 300 seconds (5 minutes)."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.rules_cache_ttl_seconds >= 0 && var.rules_cache_ttl_seconds <= 3600
+    error_message = "Cache TTL must be between 0 and 3600 seconds (1 hour)."
+  }
 }
 
 variable "tags" {

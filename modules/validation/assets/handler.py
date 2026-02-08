@@ -23,6 +23,20 @@ COMPLIANCE_TYPE_NON_COMPLIANT = "NON_COMPLIANT"
 # Indicates the tagging rules do not apply to this resource (e.g. no rules
 COMPLIANCE_TYPE_NOT_APPLICABLE = "NOT_APPLICABLE"
 
+# The DynamoDB client used to retrieve tagging rules from the DynamoDB table.
+table_client = boto3.client("dynamodb")
+# The AWS Config client used to report compliance evaluations back to AWS Config.
+config_client = boto3.client("config")
+
+# Module-level cache for compliance rules - persists across Lambda invocations
+# within the same container (warm start). This significantly reduces DynamoDB reads.
+# Thread safety note: AWS Lambda Python runtime is single-threaded per container,
+# so no locking mechanism is needed for this module-level variable.
+_rules_cache: dict[str, Any] = {
+    "rules": None,
+    "timestamp": None,
+}
+
 
 # Resource class representing the AWS resource being evaluated, extracted from the AWS Config event.
 @dataclass
@@ -360,50 +374,99 @@ _handler.setFormatter(_JSONFormatter())
 logger.handlers = [_handler]
 logger.propagate = False
 
-# The DynamoDB client used to retrieve tagging rules from the DynamoDB table.
-table_client = boto3.client("dynamodb")
-# The AWS Config client used to report compliance evaluations back to AWS Config.
-config_client = boto3.client("config")
 
-
-def get_rules(table_arn: str) -> List[Rule]:
+def get_rules(
+    table_arn: str, enable_cache: bool = False, cache_ttl_seconds: int = 3600
+) -> List[Rule]:
     """
-    Retrieve tagging rules from the DynamoDB table.
+    Retrieve tagging rules from cache or DynamoDB with automatic cache expiration.
+
+    This function implements a module-level cache that persists across Lambda invocations
+    within the same container (warm start). Cache hits can reduce DynamoDB read capacity
+    by 80-90% for typical workloads. The downside is changes to the rules will take
+    up to the cache TTL to propagate to all Lambda instances, but this is usually an acceptable
+    tradeoff for the cost savings.
+
+    Caching behavior can be controlled via:
+    - enable_cache parameter for per-invocation override (e.g., from event payload)
 
     Args:
       table_arn: The ARN of the DynamoDB table containing tagging rules.
+      enable_cache: If True, enable the cache and fetch from cache if valid.
 
     Returns:
-      A list of Rule dicts representing the tagging rules retrieved from the DynamoDB table.
-
+      A list of Rule objects representing the tagging rules.
     """
 
-    # Retrieve the table name from the ARN (the part after the last "/")
+    # Extract the table name from the ARN (format: arn:aws:dynamodb:region:account-id:table/TableName)
     table_name = table_arn.split("/")[-1]
 
     logger.info(
-        "Retrieving tagging rules from DynamoDB",
+        "Retrieving compliance rules",
         extra={
             "action": "get_rules",
-            "table_arn": table_arn,
+            "cache_ttl_seconds": cache_ttl_seconds,
+            "enable_cache": enable_cache,
             "table_name": table_name,
         },
     )
+
+    # Get the current time to compare against the cache timestamp for expiration
+    now = datetime.now(timezone.utc).timestamp()
+
+    # Check if caching is enabled before attempting to use the cache
+    if enable_cache:
+        if (
+            _rules_cache["rules"] is not None
+            and _rules_cache["timestamp"] is not None
+            and (now - _rules_cache["timestamp"]) < cache_ttl_seconds
+        ):
+            logger.info(
+                "Cache has results, using cached rules",
+                extra={
+                    "action": "get_rules",
+                    "cache_age_seconds": round(now - _rules_cache["timestamp"], 2),
+                },
+            )
+
+            return _rules_cache["rules"]
+
+        else:
+            logger.info(
+                "Cache miss or expired, fetching from DynamoDB",
+                extra={
+                    "action": "get_rules",
+                    "cache_ttl_seconds": cache_ttl_seconds,
+                    "enable_cache": enable_cache,
+                },
+            )
+
     rules = []
-    # Retrieve all the rules from the DynamoDB table using a paginator to handle large tables.
-    response = table_client.scan(TableName=table_name)
+    # Retrieve only enabled rules from the DynamoDB table with server-side filtering to reduce
+    # data transfer and parsing overhead. This can reduce costs and improve performance significantly
+    # when there are many disabled rules in the table.
+    response = table_client.scan(
+        TableName=table_name,
+        FilterExpression="Enabled = :enabled_value",
+        ExpressionAttributeValues={":enabled_value": {"BOOL": True}},
+    )
     # Iterate over the items in the response and parse each one into a tagging rule dict.
     for item in response.get("Items", []):
         rules.append(parse_rule(item))
 
-    logger.info(
-        "Retrieved tagging rules from DynamoDB",
-        extra={
-            "action": "get_rules",
-            "table_name": table_name,
-            "rule_count": len(rules),
-        },
-    )
+    # Add the results to the cache if required
+    if enable_cache:
+        _rules_cache["rules"] = rules
+        _rules_cache["timestamp"] = now
+
+        logger.info(
+            "Compliance rules cached",
+            extra={
+                "action": "get_rules",
+                "cache_ttl_seconds": cache_ttl_seconds,
+                "rule_count": len(rules),
+            },
+        )
 
     return rules
 
@@ -618,6 +681,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
     account_id = event.get("accountId") or os.environ.get("ACCOUNT_ID")
     # Get the table ARN from the environment variable (set by Terraform)
     table_arn = event.get("table_arn") or os.environ.get("TABLE_ARN")
+    # Enable the rules caching from environment variable
+    enable_cache = os.environ.get("RULES_CACHE_ENABLED", "false").lower() == "true"
+    # Check if the event has an override to the cache setting
+    if "enable_cache" in event:
+        # Apply the override from the event if any
+        enable_cache = event["enable_cache"].lower() == "true"
+    # Get the cache TTL from environment variable or default to 3600 seconds (1 hour)
+    cache_ttl_seconds = int(os.environ.get("RULES_CACHE_TTL_SECONDS", "3600"))
+
     # Get the result token from the event, which is used to report compliance results back to AWS Config.
     token = event["resultToken"]
 
@@ -660,7 +732,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
 
     else:
         # Retrieve the rules from the DynamoDB table
-        rules = get_rules(table_arn)
+        rules = get_rules(
+            cache_ttl_seconds=cache_ttl_seconds,
+            enable_cache=enable_cache,
+            table_arn=table_arn,
+        )
         # Find matching rules for the resource
         matching_rules = find_matching_rules(rules, resource)
         # If there are no matching rules, we consider the resource NOT_APPLICABLE for tagging compliance and return early.

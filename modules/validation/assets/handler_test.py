@@ -622,7 +622,11 @@ class TestGetRules:
         assert len(rules) == 1
         assert rules[0].ResourceType == "AWS::EC2::*"
         assert rules[0].Tag == "Environment"
-        mock_client.scan.assert_called_once_with(TableName="tagging-compliance")
+        mock_client.scan.assert_called_once_with(
+            TableName="tagging-compliance",
+            FilterExpression="Enabled = :enabled_value",
+            ExpressionAttributeValues={":enabled_value": {"BOOL": True}},
+        )
 
     @patch("handler.table_client")
     def test_get_rules_empty_table(self, mock_client):
@@ -633,6 +637,205 @@ class TestGetRules:
         rules = handler.get_rules(table_arn)
 
         assert len(rules) == 0
+
+
+# ============================================================================
+# Tests for rules caching
+# ============================================================================
+
+
+class TestRulesCaching:
+    """Tests for the rules caching feature."""
+
+    def setup_method(self):
+        """Reset the cache before each test."""
+        handler._rules_cache["rules"] = None
+        handler._rules_cache["timestamp"] = None
+
+    def teardown_method(self):
+        """Clean up the cache after each test."""
+        handler._rules_cache["rules"] = None
+        handler._rules_cache["timestamp"] = None
+
+    @patch("handler.table_client")
+    def test_cache_miss_first_call(self, mock_client, sample_dynamodb_item):
+        """Test cache miss on first call fetches from DynamoDB."""
+        mock_client.scan.return_value = {"Items": [sample_dynamodb_item]}
+
+        table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
+        rules = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+
+        # Verify rules were retrieved and cached
+        assert len(rules) == 1
+        assert rules[0].ResourceType == "AWS::EC2::*"
+        assert handler._rules_cache["rules"] is not None
+        assert handler._rules_cache["timestamp"] is not None
+        mock_client.scan.assert_called_once()
+
+    @patch("handler.table_client")
+    @patch("handler.datetime")
+    def test_cache_hit_subsequent_call(
+        self, mock_datetime, mock_client, sample_dynamodb_item
+    ):
+        """Test cache hit on subsequent call within TTL doesn't fetch from DynamoDB."""
+        # Setup initial time
+        mock_now = 1000.0
+        mock_datetime.now.return_value.timestamp.return_value = mock_now
+
+        mock_client.scan.return_value = {"Items": [sample_dynamodb_item]}
+
+        table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
+
+        # First call - cache miss
+        rules1 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        assert len(rules1) == 1
+        assert mock_client.scan.call_count == 1
+
+        # Advance time by 100 seconds (still within 300 second TTL)
+        mock_datetime.now.return_value.timestamp.return_value = mock_now + 100
+
+        # Second call - cache hit
+        rules2 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        assert len(rules2) == 1
+        assert rules2 == rules1
+        # Scan should still only be called once (cache hit)
+        assert mock_client.scan.call_count == 1
+
+    @patch("handler.table_client")
+    @patch("handler.datetime")
+    def test_cache_expiration_after_ttl(
+        self, mock_datetime, mock_client, sample_dynamodb_item
+    ):
+        """Test cache expires after TTL and fetches fresh data from DynamoDB."""
+        # Setup initial time
+        mock_now = 1000.0
+        mock_datetime.now.return_value.timestamp.return_value = mock_now
+
+        mock_client.scan.return_value = {"Items": [sample_dynamodb_item]}
+
+        table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
+
+        # First call - cache miss
+        rules1 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        assert len(rules1) == 1
+        assert mock_client.scan.call_count == 1
+
+        # Advance time by 301 seconds (exceeds 300 second TTL)
+        mock_datetime.now.return_value.timestamp.return_value = mock_now + 301
+
+        # Second call - cache expired, should fetch again
+        rules2 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        assert len(rules2) == 1
+        # Scan should be called twice (cache expired)
+        assert mock_client.scan.call_count == 2
+
+    @patch("handler.table_client")
+    def test_cache_disabled_always_fetches(self, mock_client, sample_dynamodb_item):
+        """Test that cache disabled always fetches from DynamoDB."""
+        mock_client.scan.return_value = {"Items": [sample_dynamodb_item]}
+
+        table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
+
+        # First call with cache disabled
+        rules1 = handler.get_rules(table_arn, enable_cache=False, cache_ttl_seconds=300)
+        assert len(rules1) == 1
+        assert mock_client.scan.call_count == 1
+
+        # Second call with cache disabled should still fetch
+        rules2 = handler.get_rules(table_arn, enable_cache=False, cache_ttl_seconds=300)
+        assert len(rules2) == 1
+        assert mock_client.scan.call_count == 2
+
+        # Cache should not be populated
+        assert handler._rules_cache["rules"] is None
+        assert handler._rules_cache["timestamp"] is None
+
+    @patch("handler.table_client")
+    @patch("handler.datetime")
+    def test_cache_ttl_boundary(self, mock_datetime, mock_client, sample_dynamodb_item):
+        """Test cache behavior at exact TTL boundary."""
+        # Setup initial time
+        mock_now = 1000.0
+        mock_datetime.now.return_value.timestamp.return_value = mock_now
+
+        mock_client.scan.return_value = {"Items": [sample_dynamodb_item]}
+
+        table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
+
+        # First call - cache miss
+        rules1 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        assert len(rules1) == 1
+        assert mock_client.scan.call_count == 1
+
+        # Advance time by exactly 300 seconds (at TTL boundary)
+        mock_datetime.now.return_value.timestamp.return_value = mock_now + 300
+
+        # Call at exact TTL boundary should expire and fetch again
+        rules2 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        assert len(rules2) == 1
+        # Scan should be called twice (cache expired at boundary)
+        assert mock_client.scan.call_count == 2
+
+    @patch("handler.table_client")
+    @patch("handler.datetime")
+    def test_cache_updated_on_fetch(
+        self, mock_datetime, mock_client, sample_dynamodb_item
+    ):
+        """Test cache timestamp is updated when fetching fresh data."""
+        # Setup initial time
+        mock_now = 1000.0
+        mock_datetime.now.return_value.timestamp.return_value = mock_now
+
+        mock_client.scan.return_value = {"Items": [sample_dynamodb_item]}
+
+        table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
+
+        # First call
+        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        first_timestamp = handler._rules_cache["timestamp"]
+        assert first_timestamp == mock_now
+
+        # Advance time and expire cache
+        mock_now = 2000.0
+        mock_datetime.now.return_value.timestamp.return_value = mock_now
+
+        # Second call should update timestamp
+        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        second_timestamp = handler._rules_cache["timestamp"]
+        assert second_timestamp == mock_now
+        assert second_timestamp > first_timestamp
+
+    @patch("handler.table_client")
+    @patch("handler.datetime")
+    def test_cache_with_different_ttl_values(
+        self, mock_datetime, mock_client, sample_dynamodb_item
+    ):
+        """Test cache respects different TTL values."""
+        # Setup initial time
+        mock_now = 1000.0
+        mock_datetime.now.return_value.timestamp.return_value = mock_now
+
+        mock_client.scan.return_value = {"Items": [sample_dynamodb_item]}
+
+        table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
+
+        # First call with 60 second TTL
+        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=60)
+        assert mock_client.scan.call_count == 1
+
+        # Advance time by 30 seconds (within 60 second TTL)
+        mock_datetime.now.return_value.timestamp.return_value = mock_now + 30
+
+        # Second call with same TTL should hit cache
+        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=60)
+        assert mock_client.scan.call_count == 1
+
+        # Advance time by another 31 seconds (61 total, exceeds 60 second TTL)
+        mock_datetime.now.return_value.timestamp.return_value = mock_now + 61
+
+        # Third call should expire and fetch again
+        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=60)
+        assert mock_client.scan.call_count == 2
 
 
 # ============================================================================

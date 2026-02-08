@@ -1,3 +1,9 @@
+variable "allowed_source_accounts" {
+  description = "List of AWS account IDs allowed to invoke this Lambda function. If not provided and organization_id is set, allows all accounts in the organization."
+  type        = list(string)
+  default     = []
+}
+
 variable "cloudwatch_logs_kms_key_id" {
   description = "The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted."
   type        = string
@@ -33,6 +39,12 @@ variable "lambda_log_level" {
   default     = "INFO"
 }
 
+variable "lambda_memory_size" {
+  description = "The amount of memory in MB allocated to the Lambda function."
+  type        = number
+  default     = 128
+}
+
 variable "lambda_name" {
   description = "The name of the Lambda function to handle AWS Organization account movements."
   type        = string
@@ -63,10 +75,21 @@ variable "organization_id" {
   default     = null
 }
 
-variable "allowed_source_accounts" {
-  description = "List of AWS account IDs allowed to invoke this Lambda function. If not provided and organization_id is set, allows all accounts in the organization."
-  type        = list(string)
-  default     = []
+variable "rules_cache_enabled" {
+  description = "Enable or disable caching of compliance rules in Lambda function memory. When enabled, rules are cached between invocations to reduce DynamoDB read costs and improve performance."
+  type        = bool
+  default     = true
+}
+
+variable "rules_cache_ttl_seconds" {
+  description = "Time-to-live (TTL) in seconds for cached compliance rules. After this period, the cache expires and rules are re-fetched from DynamoDB. Default is 300 seconds (5 minutes)."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.rules_cache_ttl_seconds >= 0 && var.rules_cache_ttl_seconds <= 3600
+    error_message = "Cache TTL must be between 0 and 3600 seconds (1 hour)."
+  }
 }
 
 variable "tags" {

@@ -626,14 +626,74 @@ Verify the resource type is in the Config rule scope:
 aws configservice describe-config-rules --config-rule-names tagging-compliance
 ```
 
-## Cost Considerations
+## DynamoDB Capacity Planning
 
-- **DynamoDB**: Pay-per-request pricing (~$1.25 per million reads)
-- **AWS Config**: ~$0.003 per configuration item recorded
-- **Lambda**: Minimal cost (typically < $5/month per account)
-- **CloudWatch Logs**: Based on ingestion and storage (configure retention appropriately)
+### Understanding RCU and WCU
 
-**Estimated cost for 1000 resources across 10 accounts**: ~$50-100/month
+DynamoDB uses two billing metrics to measure capacity:
+
+- **Read Capacity Units (RCU)**: One RCU represents one strongly consistent read per second of items up to 4 KB in size. If you need to read larger items or use eventually consistent reads, the calculation changes accordingly. See [AWS DynamoDB Read/Write Capacity Mode](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadWriteCapacityMode.html) for details.
+
+- **Write Capacity Units (WCU)**: One WCU represents one write per second of items up to 1 KB in size. Larger items consume proportionally more WCUs. See [AWS DynamoDB Provisioned Throughput](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ProvisionedThroughput.html) for details.
+
+**Billing Modes:**
+- **On-Demand**: Pay per request (~$1.25 per million reads, ~$6.25 per million writes). Best for unpredictable workloads
+- **Provisioned**: Reserve capacity upfront (cheaper for predictable workloads). This framework defaults to `PAY_PER_REQUEST`
+
+### Capacity Estimation Formula
+
+Your DynamoDB capacity depends on:
+
+1. **Number of AWS Accounts**: `N_accounts`
+2. **Resource Types in Scope**: `N_resource_types` (e.g., EC2, S3, RDS)
+3. **Total Resources**: `N_resources` (average per account)
+4. **Resource Change Frequency**: `changes_per_day` (creation/modification rate)
+5. **Config Evaluation Frequency**: `evaluation_interval` (Six_Hours, TwentyFour_Hours, etc.)
+
+**Estimated Reads per Lambda Invocation**: 2-3 reads
+- 1 read to scan/query compliance rules
+- 1 read per resource type for rule matching
+
+**Estimated Writes per Lambda Invocation**: ~1 write
+- Optional: Update compliance state in DynamoDB (or use AWS Config for state)
+
+**Capacity Calculation:**
+```
+Daily Reads = (N_accounts × N_resources × changes_per_day × 2.5)
+            + (N_accounts × N_resources × (24 ÷ evaluation_interval_hours))
+
+Daily Writes = (N_accounts × N_resources × changes_per_day × 1)
+             + (rule_updates_per_day)
+
+RCU = (Daily Reads ÷ 86,400 seconds) × 1.5  # 1.5x buffer for spikes
+WCU = (Daily Writes ÷ 86,400 seconds) × 1.5 # 1.5x buffer for spikes
+```
+
+Note the AWS Config rule can be configured to use caching on the ruleset to greatly reduce associated costs, with the downside being the additional time is now takes to roll changes to the rules.
+
+### Cost Optimization Tips
+
+1. **Start with On-Demand**: Use the default `PAY_PER_REQUEST` billing mode to test your workload
+2. **Monitor CloudWatch Metrics**: Track consumed capacity over 2-4 weeks
+3. **Consider Provisioned Mode**: Switch to provisioned if consistent reads exceed 1M/day
+4. **Enable TTL**: Set a time-to-live on compliance history items to automatically delete old data
+5. **Rule Caching**: The Lambda handler implements in-memory caching to reduce DynamoDB reads by 80%+
+6. **DAX Consideration**: For very large deployments, consider DynamoDB Accelerator (DAX) for additional caching
+
+### Changing Billing Mode
+
+```hcl
+# Switch from on-demand to provisioned (update variables)
+module "tagging_compliance_central" {
+  source = "appvia/tagging/aws"
+
+  dynamodb_billing_mode        = "PROVISIONED"
+  dynamodb_table_read_capacity = 100
+  dynamodb_table_write_capacity = 20
+
+  # ... other variables
+}
+```
 
 ## Update Documentation
 

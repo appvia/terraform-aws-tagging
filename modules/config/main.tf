@@ -9,10 +9,13 @@ module "lambda_function" {
   dynamodb_table_arn                = var.dynamodb_table_arn
   lambda_description                = var.lambda_description
   lambda_log_level                  = var.lambda_log_level
+  lambda_memory_size                = var.lambda_memory_size
   lambda_name                       = var.lambda_name
   lambda_role_name                  = var.lambda_role_name
   lambda_runtime                    = var.lambda_runtime
   lambda_timeout                    = var.lambda_timeout
+  rules_cache_enabled               = var.rules_cache_enabled
+  rules_cache_ttl_seconds           = var.rules_cache_ttl_seconds
   tags                              = var.tags
 }
 
