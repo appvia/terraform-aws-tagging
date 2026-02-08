@@ -221,6 +221,15 @@ class Evaluations:
             )
         )
 
+    def get_non_compliance_reasons(self) -> List[str]:
+        """Get a list of annotations for all non-compliant evaluations."""
+
+        return [
+            evaluation.Annotation
+            for evaluation in self.Evaluations
+            if evaluation.Compliant == COMPLIANCE_TYPE_NON_COMPLIANT
+        ]
+
 
 def parse_configuration_item(item: Dict[str, Any]) -> Resource:
     """
@@ -559,14 +568,14 @@ def validate_compliance(
         # Check if the tag is present on the resource and get its value (or null if not present)
         if not resource.contains(tag) and rule.Required:
             conditions.add_non_compliant(
-                annotation="Required tag is missing",
+                annotation=f"Required tag '{tag}' missing",
                 rule=rule,
             )
 
         if resource.contains(tag):
             if rule.has_values() and not resource.is_value(tag, rule.Values):
                 conditions.add_non_compliant(
-                    annotation=f"Tag value does not match any of the permitted values: {rule.Values}",
+                    annotation=f"Tag '{tag}' doesn't match permitted values: {rule.Values}",
                     rule=rule,
                     value=resource.Tags[tag],
                 )
@@ -575,7 +584,7 @@ def validate_compliance(
                 tag, rule.ValuePattern
             ):
                 conditions.add_non_compliant(
-                    annotation=f"Tag value does not match the required pattern: {rule.ValuePattern}",
+                    annotation=f"Tag '{tag}' doesn't match the required pattern: {rule.ValuePattern}",
                     rule=rule,
                     value=resource.Tags[tag],
                 )
@@ -793,8 +802,16 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
         compliance_type = COMPLIANCE_TYPE_COMPLIANT
         annotation = "Resource is compliant with tagging rules."
     else:
+        reasons = "; ".join(evaluations.get_non_compliance_reasons())
+        # If the annotation exceeds 256 characters, we truncate it to fit within AWS 
+        # Config limits, ensuring we don't cut off in the middle of a reason.
+        if len(reasons) > 200:
+            truncated_reasons = reasons[:197] + "..."
+            annotation = f"Resource is non-compliant. Reasons: {truncated_reasons}"
+        else:
+            annotation = f"Resource is non-compliant. Reasons: {reasons}"
+
         compliance_type = COMPLIANCE_TYPE_NON_COMPLIANT
-        annotation = "Resource is non-compliant with tagging rules. See evaluation details for more information."
 
     # Report the compliance evaluation back to AWS Config using the result token from the event.
     config_client.put_evaluations(

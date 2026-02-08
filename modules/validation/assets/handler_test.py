@@ -309,6 +309,265 @@ class TestEvaluations:
         assert evaluations.Evaluations[0].Annotation == "Tag value not permitted"
         assert evaluations.Evaluations[0].RuleId == "test-rule"
 
+    def test_get_non_compliance_reasons_single(self):
+        """Test get_non_compliance_reasons() returns annotations from non-compliant evaluations."""
+        evaluations = handler.Evaluations(Evaluations=[])
+        evaluations.add_non_compliant(
+            annotation="Missing required tag",
+            rule=handler.Rule(Tag="Environment", ResourceType="AWS::EC2::*"),
+        )
+        reasons = evaluations.get_non_compliance_reasons()
+        assert len(reasons) == 1
+        assert reasons[0] == "Missing required tag"
+
+    def test_get_non_compliance_reasons_multiple(self):
+        """Test get_non_compliance_reasons() returns multiple annotations."""
+        evaluations = handler.Evaluations(Evaluations=[])
+        evaluations.add_non_compliant(
+            annotation="Missing required tag",
+            rule=handler.Rule(Tag="Environment", ResourceType="AWS::EC2::*"),
+        )
+        evaluations.add_non_compliant(
+            annotation="Invalid tag value",
+            rule=handler.Rule(Tag="Owner", ResourceType="AWS::EC2::*"),
+        )
+        reasons = evaluations.get_non_compliance_reasons()
+        assert len(reasons) == 2
+        assert "Missing required tag" in reasons
+        assert "Invalid tag value" in reasons
+
+    def test_get_non_compliance_reasons_mixed_compliance_types(self):
+        """Test get_non_compliance_reasons() only returns non-compliant reasons."""
+        evaluations = handler.Evaluations(Evaluations=[])
+        evaluations.add_compliant(
+            annotation="Tag present and valid",
+            rule=handler.Rule(Tag="Environment", ResourceType="AWS::EC2::*"),
+        )
+        evaluations.add_non_compliant(
+            annotation="Missing required tag",
+            rule=handler.Rule(Tag="Owner", ResourceType="AWS::EC2::*"),
+        )
+        evaluations.add_not_applicable(annotation="Resource not applicable")
+        reasons = evaluations.get_non_compliance_reasons()
+        assert len(reasons) == 1
+        assert reasons[0] == "Missing required tag"
+
+    def test_get_non_compliance_reasons_empty(self):
+        """Test get_non_compliance_reasons() returns empty list when no non-compliant evaluations."""
+        evaluations = handler.Evaluations(
+            Evaluations=[
+                handler.Evaluation(Compliant=handler.COMPLIANCE_TYPE_COMPLIANT),
+                handler.Evaluation(Compliant=handler.COMPLIANCE_TYPE_NOT_APPLICABLE),
+            ]
+        )
+        reasons = evaluations.get_non_compliance_reasons()
+        assert len(reasons) == 0
+        assert reasons == []
+
+
+# ============================================================================
+# Tests for annotation and reason aggregation
+# ============================================================================
+
+
+class TestAnnotationAggregation:
+    """Tests for annotation aggregation and truncation in lambda_handler."""
+
+    @patch.dict(
+        os.environ,
+        {
+            "ACCOUNT_ID": "123456789012",
+            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+        },
+    )
+    @patch("handler.config_client")
+    @patch("handler.table_client")
+    def test_annotation_single_reason(
+        self, mock_table_client, mock_config_client, sample_config_event
+    ):
+        """Test annotation with single non-compliance reason."""
+        # Rule requires specific values which resource doesn't have
+        rule_item = {
+            "ResourceType": {"S": "AWS::EC2::*"},
+            "Tag": {"S": "Environment"},
+            "Enabled": {"BOOL": True},
+            "Required": {"BOOL": True},
+            "ValuePattern": {"S": ""},
+            "Values": {"S": '["Development"]'},  # Resource has "Production"
+            "AccountIds": {"S": '["*"]'},
+        }
+        mock_table_client.scan.return_value = {"Items": [rule_item]}
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(sample_config_event, None)
+
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        annotation = call_args["Evaluations"][0]["Annotation"]
+        assert "Resource is non-compliant" in annotation
+        assert "Reasons:" in annotation
+        assert "permitted values" in annotation.lower()
+
+    @patch.dict(
+        os.environ,
+        {
+            "ACCOUNT_ID": "123456789012",
+            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+        },
+    )
+    @patch("handler.config_client")
+    @patch("handler.table_client")
+    def test_annotation_multiple_reasons(
+        self, mock_table_client, mock_config_client, sample_config_event
+    ):
+        """Test annotation with multiple non-compliance reasons."""
+        # Two rules, both will fail
+        rule_items = [
+            {
+                "ResourceType": {"S": "AWS::EC2::*"},
+                "Tag": {"S": "Environment"},
+                "Enabled": {"BOOL": True},
+                "Required": {"BOOL": True},
+                "ValuePattern": {"S": ""},
+                "Values": {"S": '["Development"]'},
+                "AccountIds": {"S": '["*"]'},
+            },
+            {
+                "ResourceType": {"S": "AWS::EC2::Instance"},
+                "Tag": {"S": "Owner"},
+                "Enabled": {"BOOL": True},
+                "Required": {"BOOL": True},
+                "ValuePattern": {"S": r"^admin@example\.com$"},
+                "Values": {"S": "[]"},
+                "AccountIds": {"S": '["*"]'},
+            },
+        ]
+        mock_table_client.scan.return_value = {"Items": rule_items}
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(sample_config_event, None)
+
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        annotation = call_args["Evaluations"][0]["Annotation"]
+        assert "Resource is non-compliant" in annotation
+        # Multiple reasons should be separated by "; "
+        assert ";" in annotation or "Reasons:" in annotation
+
+    @patch.dict(
+        os.environ,
+        {
+            "ACCOUNT_ID": "123456789012",
+            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+        },
+    )
+    @patch("handler.config_client")
+    @patch("handler.table_client")
+    def test_annotation_truncation_at_256_chars(
+        self, mock_table_client, mock_config_client, sample_config_event
+    ):
+        """Test annotation is truncated if it exceeds 256 characters."""
+        # Create multiple rules that will generate long reasons
+        rule_items = [
+            {
+                "ResourceType": {"S": "AWS::EC2::*"},
+                "Tag": {"S": f"Tag{i}"},
+                "Enabled": {"BOOL": True},
+                "Required": {"BOOL": True},
+                "ValuePattern": {"S": r"^specific-value-that-resource-does-not-have$"},
+                "Values": {"S": "[]"},
+                "AccountIds": {"S": '["*"]'},
+            }
+            for i in range(5)  # Multiple rules to generate long annotation
+        ]
+        mock_table_client.scan.return_value = {"Items": rule_items}
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(sample_config_event, None)
+
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        annotation = call_args["Evaluations"][0]["Annotation"]
+        # Annotation should not exceed 256 characters
+        assert len(annotation) <= 256
+        # If truncated, should end with ellipsis
+        if "..." in annotation:
+            assert annotation.endswith("...")
+
+    @patch.dict(
+        os.environ,
+        {
+            "ACCOUNT_ID": "123456789012",
+            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+        },
+    )
+    @patch("handler.config_client")
+    @patch("handler.table_client")
+    def test_annotation_no_truncation_under_256_chars(
+        self, mock_table_client, mock_config_client, sample_config_event
+    ):
+        """Test annotation is not truncated if under 256 characters."""
+        rule_item = {
+            "ResourceType": {"S": "AWS::EC2::*"},
+            "Tag": {"S": "Environment"},
+            "Enabled": {"BOOL": True},
+            "Required": {"BOOL": True},
+            "ValuePattern": {"S": ""},
+            "Values": {"S": '["Development"]'},
+            "AccountIds": {"S": '["*"]'},
+        }
+        mock_table_client.scan.return_value = {"Items": [rule_item]}
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(sample_config_event, None)
+
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        annotation = call_args["Evaluations"][0]["Annotation"]
+        # Should not end with ellipsis for short annotations
+        assert not annotation.endswith("...")
+        # Should still be under 256 characters
+        assert len(annotation) <= 256
+
+    @patch.dict(
+        os.environ,
+        {
+            "ACCOUNT_ID": "123456789012",
+            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+        },
+    )
+    @patch("handler.config_client")
+    @patch("handler.table_client")
+    def test_reasons_joined_with_semicolon(
+        self, mock_table_client, mock_config_client, sample_config_event
+    ):
+        """Test that multiple reasons are joined with semicolons."""
+        rule_items = [
+            {
+                "ResourceType": {"S": "AWS::EC2::*"},
+                "Tag": {"S": "Environment"},
+                "Enabled": {"BOOL": True},
+                "Required": {"BOOL": True},
+                "ValuePattern": {"S": ""},
+                "Values": {"S": '["Development"]'},
+                "AccountIds": {"S": '["*"]'},
+            },
+            {
+                "ResourceType": {"S": "AWS::EC2::Instance"},
+                "Tag": {"S": "Owner"},
+                "Enabled": {"BOOL": True},
+                "Required": {"BOOL": True},
+                "ValuePattern": {"S": ""},
+                "Values": {"S": "[]"},
+                "AccountIds": {"S": '["*"]'},
+            },
+        ]
+        mock_table_client.scan.return_value = {"Items": rule_items}
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(sample_config_event, None)
+
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        annotation = call_args["Evaluations"][0]["Annotation"]
+        # Should contain multiple reasons separated by semicolon and space
+        assert ";" in annotation
+
 
 # ============================================================================
 # Tests for parsing functions
