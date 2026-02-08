@@ -69,8 +69,14 @@ variable "lambda_timeout" {
   default     = 30
 }
 
-variable "organization_id" {
+variable "organizations_id" {
   description = "AWS Organization ID to allow cross-account invocation. If provided, allows any account in the organization to invoke the Lambda function."
+  type        = string
+  default     = null
+}
+
+variable "organizations_table_arn" {
+  description = "The ARN of the DynamoDB table to store AWS Organizations account information. If provided, the Lambda function will use this table to evaluate compliance of AWS resources against organizational rules."
   type        = string
   default     = null
 }

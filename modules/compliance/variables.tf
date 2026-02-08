@@ -7,13 +7,14 @@ variable "dynamodb_table_name" {
 variable "rules" {
   description = "List of compliance rules to be stored in the DynamoDB table."
   type = list(object({
-    AccountIds   = optional(list(string), ["*"])
-    Enabled      = optional(bool, true)
-    Required     = optional(bool, true)
-    ResourceType = string
-    RuleId       = string
-    Tag          = string
-    ValuePattern = optional(string, "")
-    Values       = optional(list(string), [])
+    AccountIds          = optional(list(string), ["*"])
+    Enabled             = optional(bool, true)
+    OrganizationalPaths = optional(list(string), [])
+    Required            = optional(bool, true)
+    ResourceType        = string
+    RuleId              = string
+    Tag                 = string
+    ValuePattern        = optional(string, "")
+    Values              = optional(list(string), [])
   }))
 }

@@ -14,6 +14,7 @@ module "lambda_function" {
   lambda_role_name                  = var.lambda_role_name
   lambda_runtime                    = var.lambda_runtime
   lambda_timeout                    = var.lambda_timeout
+  organizations_table_arn           = var.organizations_table_arn
   rules_cache_enabled               = var.rules_cache_enabled
   rules_cache_ttl_seconds           = var.rules_cache_ttl_seconds
   tags                              = var.tags

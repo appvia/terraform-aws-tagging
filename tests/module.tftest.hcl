@@ -6,8 +6,13 @@ run "basic" {
   command = plan
 
   variables {
-    dynamodb_table_name = "tagging-compliance"
-    organization_id     = "o-1234567890"
+    compliance = {
+      table = {
+        name = "tagging-compliance"
+      }
+    }
+    enable_organizations = true
+    organizations_id     = "o-1234567890"
     tags = {
       "CostCenter"  = "12345"
       "Environment" = "Production"
@@ -40,8 +45,12 @@ run "with_rules" {
   command = plan
 
   variables {
-    dynamodb_table_name = "tagging-compliance"
-    organization_id     = "o-1234567890"
+    compliance = {
+      table = {
+        name = "tagging-compliance"
+      }
+    }
+    organizations_id = "o-1234567890"
     tags = {
       "CostCenter"  = "12345"
       "Environment" = "Production"

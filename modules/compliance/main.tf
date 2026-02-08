@@ -33,5 +33,8 @@ resource "aws_dynamodb_table_item" "tagging" {
     AccountIds = {
       S = jsonencode(each.value.AccountIds)
     }
+    OrganizationalPaths = {
+      S = jsonencode(each.value.OrganizationalPaths)
+    }
   })
 }

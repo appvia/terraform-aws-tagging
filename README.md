@@ -101,6 +101,7 @@ The framework supports two deployment patterns:
 - **Centralized Management**: Define tagging rules once, enforce everywhere
 - **Organization-Wide Scope**: Works across all accounts in an AWS Organization
 - **Flexible Rules**: Support for required/optional tags, permitted values, and regex patterns
+- **Organizational Path Scoping**: Target rules to specific AWS Organizations paths (e.g. `root/Sandbox`)
 - **Account Scoping**: Apply different rules to different accounts (e.g., stricter rules for production)
 - **Resource Type Filtering**: Target specific AWS services or resource types
 - **Real-Time Enforcement**: Automatic evaluation when resources change
@@ -141,15 +142,32 @@ Wraps the Lambda evaluator into an AWS Config Conformance Pack for organization-
 
 ### Step 1: Deploy Central DynamoDB Table (Management Account)
 
+If you plan to scope rules using `OrganizationalPaths`, you must set `var.organizations` in the root module. This creates a separate DynamoDB table for account metadata and deploys a Lambda that uses the AWS Organizations API to populate account information (including organizational paths). The compliance evaluator then uses that table to match `OrganizationalPaths` in rules.
+
 ```hcl
 # In your management account (or shared services account)
 module "tagging_compliance_central" {
-  source = "appvia/tagging/aws"
+  source  = "appvia/tagging/aws"
   version = "0.0.1"
 
-  dynamodb_table_name  = "tagging-compliance-rules"
-  dynamodb_billing_mode = "PAY_PER_REQUEST"
-  organization_id      = "o-123456789"  # Your AWS Organization ID
+  # Configure the compliance DynamoDB table
+  compliance = {
+    table = {
+      name         = "tagging-compliance-rules"
+      billing_mode = "PAY_PER_REQUEST"
+    }
+  }
+
+  # Enable organization-wide access
+  enable_organizations = true
+  organizations_id     = "o-123456789"  # Your AWS Organization ID
+
+  # Enable Organizations metadata table for OrganizationalPaths filtering
+  organizations = {
+    table = {
+      name = "organizational-accounts"
+    }
+  }
 
   # Define compliance rules centrally
   rules = [
@@ -179,6 +197,15 @@ module "tagging_compliance_central" {
       ValuePattern = "^CC-[0-9]{4}$"
       AccountIds   = ["111222333444"]  # Production account only
       Enabled      = true
+    },
+    {
+      RuleId              = "require-owner-email-sandbox"
+      ResourceType        = "AWS::*"
+      Tag                 = "Owner"
+      Required            = true
+      ValuePattern        = "^[a-zA-Z0-9._%+-]+@company\\.com$"
+      OrganizationalPaths = ["root/Sandbox"]
+      Enabled             = true
     }
   ]
 
@@ -198,11 +225,11 @@ output "dynamodb_table_arn" {
 ```hcl
 # In each member account that should enforce compliance
 module "tagging_compliance_evaluator" {
-  source = "appvia/tagging/aws//modules/config"
+  source  = "appvia/tagging/aws//modules/config"
   version = "0.0.1"
 
   # Reference the central DynamoDB table (cross-account)
-  compliance_dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/tagging-compliance-rules"
+  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/tagging-compliance-rules"
 
   # Lambda configuration
   lambda_name        = "tagging-compliance-evaluator"
@@ -210,8 +237,7 @@ module "tagging_compliance_evaluator" {
   lambda_log_level   = "INFO"
 
   # AWS Config rule configuration
-  config_name                    = "tagging-compliance"
-  config_max_execution_frequency = "TwentyFour_Hours"
+  config_name           = "tagging-compliance"
   config_resource_types = [
     "AWS::EC2::Instance",
     "AWS::EC2::Volume",
@@ -266,9 +292,17 @@ Here's a complete example showing deployment across a typical AWS Organization:
 module "tagging_compliance" {
   source = "appvia/tagging/aws"
 
-  dynamodb_table_name   = "org-tagging-compliance"
-  dynamodb_billing_mode = "PAY_PER_REQUEST"
-  organization_id       = data.aws_organizations_organization.current.id
+  # Configure the compliance DynamoDB table
+  compliance = {
+    table = {
+      name         = "org-tagging-compliance"
+      billing_mode = "PAY_PER_REQUEST"
+    }
+  }
+
+  # Enable organization-wide access
+  enable_organizations = true
+  organizations_id     = data.aws_organizations_organization.current.id
 
   rules = [
     # Global rules for all accounts
@@ -340,14 +374,13 @@ output "compliance_table_arn" {
 module "tagging_evaluator" {
   source = "appvia/tagging/aws//modules/config"
 
-  compliance_dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/org-tagging-compliance"
+  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/org-tagging-compliance"
 
   lambda_name      = "tagging-compliance-prod"
   lambda_log_level = "INFO"
   lambda_timeout   = 60
 
-  config_name                    = "tagging-compliance-prod"
-  config_max_execution_frequency = "Six_Hours"  # More frequent in production
+  config_name           = "tagging-compliance-prod"
   config_resource_types = [
     "AWS::EC2::Instance",
     "AWS::EC2::Volume",
@@ -378,14 +411,13 @@ module "tagging_evaluator" {
 module "tagging_evaluator" {
   source = "appvia/tagging/aws//modules/config"
 
-  compliance_dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/org-tagging-compliance"
+  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/org-tagging-compliance"
 
   lambda_name      = "tagging-compliance-dev"
   lambda_log_level = "DEBUG"  # More verbose logging in dev
 
-  config_name                    = "tagging-compliance-dev"
-  config_max_execution_frequency = "TwentyFour_Hours"  # Less frequent in dev
-  config_resource_types          = ["*"]  # Evaluate all resource types
+  config_name           = "tagging-compliance-dev"
+  config_resource_types = ["*"]  # Evaluate all resource types
 
   cloudwatch_logs_retention_in_days = 7  # Shorter retention for dev
 
@@ -505,7 +537,6 @@ module "tagging_config" {
   dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/compliance-rules"
   lambda_name        = "org-tagging-compliance"
   config_name        = "tagging-compliance"
-  organization_id    = "o-123456789"  # For cross-account invocation
 
   tags = { Environment = "production" }
 }
@@ -534,7 +565,7 @@ module "tagging_pack" {
   deploy_organization_wide = true
 
   lambda_function_arn = module.validation.lambda_arn
-  dynamodb_table_arn  = module.tagging_central.dynamodb_arn
+  dynamodb_table_arn  = module.tagging_compliance.dynamodb_arn
 
   excluded_accounts = ["111111111111"]  # Sandbox accounts
 
@@ -573,10 +604,9 @@ module "tagging_pack" {
 module "tagging_config_prod" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn         = "arn:aws:dynamodb:us-east-1:999999999999:table/compliance-rules"
-  lambda_name                = "org-tagging-compliance"
-  config_name                = "tagging-compliance-prod"
-  config_max_execution_frequency = "Six_Hours"  # More frequent
+  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/compliance-rules"
+  lambda_name        = "org-tagging-compliance"
+  config_name        = "tagging-compliance-prod"
 
   # ... other config
 }
@@ -687,9 +717,14 @@ Note the AWS Config rule can be configured to use caching on the ruleset to grea
 module "tagging_compliance_central" {
   source = "appvia/tagging/aws"
 
-  dynamodb_billing_mode        = "PROVISIONED"
-  dynamodb_table_read_capacity = 100
-  dynamodb_table_write_capacity = 20
+  compliance = {
+    table = {
+      name           = "tagging-compliance-rules"
+      billing_mode   = "PROVISIONED"
+      read_capacity  = 100
+      write_capacity = 20
+    }
+  }
 
   # ... other variables
 }
@@ -709,28 +744,28 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.0.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0.0 |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_dynamodb_billing_mode"></a> [dynamodb\_billing\_mode](#input\_dynamodb\_billing\_mode) | The billing mode for the DynamoDB table. Valid values are PROVISIONED and PAY\_PER\_REQUEST. | `string` | `"PAY_PER_REQUEST"` | no |
-| <a name="input_dynamodb_table_kms_key_id"></a> [dynamodb\_table\_kms\_key\_id](#input\_dynamodb\_table\_kms\_key\_id) | KMS key ID for DynamoDB table encryption (optional) | `string` | `null` | no |
-| <a name="input_dynamodb_table_name"></a> [dynamodb\_table\_name](#input\_dynamodb\_table\_name) | The name of the DynamoDB table to store tags for AWS resources. | `string` | `"tagging-compliance"` | no |
-| <a name="input_dynamodb_table_point_in_time_recovery_enabled"></a> [dynamodb\_table\_point\_in\_time\_recovery\_enabled](#input\_dynamodb\_table\_point\_in\_time\_recovery\_enabled) | Enable point-in-time recovery for the DynamoDB table | `bool` | `false` | no |
-| <a name="input_dynamodb_table_read_capacity"></a> [dynamodb\_table\_read\_capacity](#input\_dynamodb\_table\_read\_capacity) | The read capacity units for the DynamoDB table (only applicable if billing mode is PROVISIONED) | `number` | `null` | no |
-| <a name="input_dynamodb_table_write_capacity"></a> [dynamodb\_table\_write\_capacity](#input\_dynamodb\_table\_write\_capacity) | The write capacity units for the DynamoDB table (only applicable if billing mode is PROVISIONED) | `number` | `null` | no |
-| <a name="input_enable_organization_access"></a> [enable\_organization\_access](#input\_enable\_organization\_access) | Whether to allow access to the DynamoDB table from the AWS Organization. | `bool` | `true` | no |
-| <a name="input_organization_id"></a> [organization\_id](#input\_organization\_id) | The ID of the AWS Organization to allow access to the DynamoDB table. | `string` | `null` | no |
-| <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds   = optional(list(string), ["*"])<br/>    Enabled      = optional(bool, true)<br/>    Required     = optional(bool, true)<br/>    ResourceType = string<br/>    RuleId       = string<br/>    Tag          = string<br/>    ValuePattern = optional(string, null)<br/>    Values       = optional(list(string), [])<br/>  }))</pre> | `[]` | no |
+| <a name="input_compliance"></a> [compliance](#input\_compliance) | Configuration for the compliance feature. | <pre>object({<br/>    table = object({<br/>      ## The billing mode for the DynamoDB table. Valid values are PROVISIONED and PAY_PER_REQUEST.<br/>      billing_mode = optional(string, "PAY_PER_REQUEST")<br/>      ## The KMS key ID or ARN to use for server-side encryption of the DynamoDB table.<br/>      kms_key_id = optional(string, null)<br/>      ## The name of the DynamoDB table to store compliance rules.<br/>      name = optional(string, "tagging-compliance")<br/>      ## Whether to enable point-in-time recovery for the DynamoDB table. Defaults to false.<br/>      point_in_time_recovery_enabled = optional(bool, false)<br/>      ## The read capacity units for the DynamoDB table (only applicable if billing_mode is PROVISIONED).<br/>      read_capacity = optional(number, null)<br/>      ## The write capacity units for the DynamoDB table (only applicable if billing_mode is PROVISIONED).<br/>      write_capacity = optional(number, null)<br/>    })<br/>  })</pre> | <pre>{<br/>  "table": {}<br/>}</pre> | no |
+| <a name="input_enable_organizations"></a> [enable\_organizations](#input\_enable\_organizations) | Enable organization access to the DynamoDB table. When enabled, allows any account in the organization to access the table. | `bool` | `true` | no |
+| <a name="input_organizations"></a> [organizations](#input\_organizations) | Configuration for the organizations table and lambda. | <pre>object({<br/>    table = object({<br/>      ## The billing mode for the DynamoDB table. Valid values are PROVISIONED and PAY_PER_REQUEST.<br/>      billing_mode = optional(string, "PAY_PER_REQUEST")<br/>      ## The KMS key ID or ARN to use for server-side encryption of the DynamoDB table.<br/>      kms_key_id = optional(string, null)<br/>      ## The name of the DynamoDB table to store organization metadata for AWS resources.<br/>      name = optional(string, "organization-compliance")<br/>      ## Whether to enable point-in-time recovery for the DynamoDB table. Defaults to false.<br/>      point_in_time_recovery_enabled = optional(bool, false)<br/>      ## The read capacity units for the DynamoDB table (only applicable if billing_mode is PROVISIONED).<br/>      read_capacity = optional(number, null)<br/>      ## The write capacity units for the DynamoDB table (only applicable if billing_mode is PROVISIONED).<br/>      write_capacity = optional(number, null)<br/>    }),<br/>    lambda = optional(object({<br/>      ## The description of the Lambda function to handle AWS Organization account movements.<br/>      description = optional(string, "Handles AWS Organization account movements for tagging compliance.")<br/>      ## The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL.<br/>      log_level = optional(string, "INFO")<br/>      ## The amount of memory in MB allocated to the Lambda function.<br/>      memory_size = optional(number, 128)<br/>      ## The name of the Lambda function to handle AWS Organization account movements.<br/>      name = optional(string, "organization-compliance")<br/>      ## The runtime environment for the Lambda function.<br/>      role_name = optional(string, "organization-compliance")<br/>      ## The runtime environment for the Lambda function.<br/>      runtime = optional(string, "python3.12")<br/>      ## The timeout for the Lambda function in seconds.<br/>      timeout = optional(number, 30)<br/>    }), {})<br/>  })</pre> | `null` | no |
+| <a name="input_organizations_id"></a> [organizations\_id](#input\_organizations\_id) | AWS Organization ID to allow access to the DynamoDB table/s | `string` | `null` | no |
+| <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds          = optional(list(string), [])<br/>    Enabled             = optional(bool, true)<br/>    Required            = optional(bool, true)<br/>    ResourceType        = string<br/>    RuleId              = string<br/>    Tag                 = string<br/>    ValuePattern        = optional(string, null)<br/>    Values              = optional(list(string), [])<br/>    OrganizationalPaths = optional(list(string), [])<br/>  }))</pre> | `[]` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to the DynamoDB table. | `map(string)` | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| <a name="output_dynamodb_arn"></a> [dynamodb\_arn](#output\_dynamodb\_arn) | The ARN of the DynamoDB table used for tagging compliance. |
-| <a name="output_dynamodb_name"></a> [dynamodb\_name](#output\_dynamodb\_name) | The name of the DynamoDB table used for tagging compliance. |
-| <a name="output_organization_id"></a> [organization\_id](#output\_organization\_id) | The ID of the AWS Organization allowed access to the DynamoDB table. |
+| <a name="output_dynamodb_table_arn"></a> [dynamodb\_table\_arn](#output\_dynamodb\_table\_arn) | The ARN of the DynamoDB table used for tagging compliance. |
+| <a name="output_dynamodb_table_name"></a> [dynamodb\_table\_name](#output\_dynamodb\_table\_name) | The name of the DynamoDB table used for tagging compliance. |
+| <a name="output_organizations_id"></a> [organizations\_id](#output\_organizations\_id) | The ID of the AWS Organization allowed access to the DynamoDB table. |
+| <a name="output_organizations_lambda_arn"></a> [organizations\_lambda\_arn](#output\_organizations\_lambda\_arn) | The ARN of the Lambda function used for handling organization account movements. |
+| <a name="output_organizations_lambda_name"></a> [organizations\_lambda\_name](#output\_organizations\_lambda\_name) | The name of the Lambda function used for handling organization account movements. |
+| <a name="output_organizations_table_arn"></a> [organizations\_table\_arn](#output\_organizations\_table\_arn) | The ARN of the DynamoDB table used for storing organization metadata. |
+| <a name="output_organizations_table_name"></a> [organizations\_table\_name](#output\_organizations\_table\_name) | The name of the DynamoDB table used for storing organization metadata. |
 <!-- END_TF_DOCS -->

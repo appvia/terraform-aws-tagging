@@ -75,6 +75,12 @@ variable "lambda_timeout" {
   default     = 30
 }
 
+variable "organizations_table_arn" {
+  description = "The ARN of the DynamoDB table to store AWS Organizations account information."
+  type        = string
+  default     = null
+}
+
 variable "rules_cache_enabled" {
   description = "Enable or disable caching of compliance rules in Lambda function memory. When enabled, rules are cached between invocations to reduce DynamoDB read costs and improve performance."
   type        = bool

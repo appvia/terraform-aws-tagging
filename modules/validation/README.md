@@ -29,11 +29,11 @@ This Terraform module provisions custom lambda used to evaluate tagging complian
 ### Basic Example
 
 ```hcl
-module "config_tagging_compliance" {
-  source = "./modules/config"
+module "tagging_validation" {
+  source = "./modules/validation"
 
   # DynamoDB table containing tagging rules
-  compliance_dynamodb_table_arn = aws_dynamodb_table.tagging_rules.arn
+  dynamodb_table_arn = aws_dynamodb_table.tagging_rules.arn
 
   # Lambda configuration
   lambda_name        = "tagging-compliance-handler"
@@ -172,19 +172,15 @@ resource "aws_dynamodb_table" "tagging_rules" {
   }
 }
 
-# Deploy the config module
-module "config_tagging_compliance" {
-  source = "./modules/config"
+# Deploy the validation module
+module "tagging_validation" {
+  source = "./modules/validation"
 
-  compliance_dynamodb_table_arn = aws_dynamodb_table.tagging_rules.arn
+  dynamodb_table_arn = aws_dynamodb_table.tagging_rules.arn
 
   lambda_name        = "tagging-compliance"
-  lambda_description = "Evaluates resource tagging compliance via AWS Config"
+  lambda_description = "Evaluates resource tagging compliance"
   lambda_log_level   = "DEBUG"
-
-  config_name                    = "resource-tagging-compliance"
-  config_max_execution_frequency = "Six_Hours"
-  config_resource_types          = ["AWS::EC2::Instance", "AWS::S3::Bucket", "AWS::RDS::DBInstance", "AWS::Lambda::Function"]
 
   cloudwatch_logs_retention_in_days = 14
   cloudwatch_logs_kms_key_id        = aws_kms_key.logs.id
@@ -195,13 +191,9 @@ module "config_tagging_compliance" {
   }
 }
 
-# Output compliance status
-output "config_rule_arn" {
-  value = module.config_tagging_compliance.config_rule_arn
-}
-
+# Output Lambda function details
 output "lambda_function_arn" {
-  value = module.config_tagging_compliance.lambda_function_arn
+  value = module.tagging_validation.lambda_arn
 }
 ```
 
@@ -315,11 +307,15 @@ View compliance status directly in the AWS Config console:
 | <a name="input_cloudwatch_logs_retention_in_days"></a> [cloudwatch\_logs\_retention\_in\_days](#input\_cloudwatch\_logs\_retention\_in\_days) | The number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827. | `number` | `7` | no |
 | <a name="input_lambda_description"></a> [lambda\_description](#input\_lambda\_description) | The description of the Lambda function to handle AWS Organization account movements. | `string` | `"Handles AWS Organization account movements for tagging compliance."` | no |
 | <a name="input_lambda_log_level"></a> [lambda\_log\_level](#input\_lambda\_log\_level) | The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL. | `string` | `"INFO"` | no |
+| <a name="input_lambda_memory_size"></a> [lambda\_memory\_size](#input\_lambda\_memory\_size) | The amount of memory in MB allocated to the Lambda function. | `number` | `128` | no |
 | <a name="input_lambda_name"></a> [lambda\_name](#input\_lambda\_name) | The name of the Lambda function to handle AWS Organization account movements. | `string` | `"tagging-compliance"` | no |
 | <a name="input_lambda_role_name"></a> [lambda\_role\_name](#input\_lambda\_role\_name) | The name of the IAM role to be created for the Lambda function. | `string` | `"tagging-compliance"` | no |
 | <a name="input_lambda_runtime"></a> [lambda\_runtime](#input\_lambda\_runtime) | The runtime environment for the Lambda function. | `string` | `"python3.12"` | no |
 | <a name="input_lambda_timeout"></a> [lambda\_timeout](#input\_lambda\_timeout) | The timeout for the Lambda function in seconds. | `number` | `30` | no |
-| <a name="input_organization_id"></a> [organization\_id](#input\_organization\_id) | AWS Organization ID to allow cross-account invocation. If provided, allows any account in the organization to invoke the Lambda function. | `string` | `null` | no |
+| <a name="input_organizations_id"></a> [organizations\_id](#input\_organizations\_id) | AWS Organization ID to allow cross-account invocation. If provided, allows any account in the organization to invoke the Lambda function. | `string` | `null` | no |
+| <a name="input_organizations_table_arn"></a> [organizations\_table\_arn](#input\_organizations\_table\_arn) | The ARN of the DynamoDB table to store AWS Organizations account information. If provided, the Lambda function will use this table to evaluate compliance of AWS resources against organizational rules. | `string` | `null` | no |
+| <a name="input_rules_cache_enabled"></a> [rules\_cache\_enabled](#input\_rules\_cache\_enabled) | Enable or disable caching of compliance rules in Lambda function memory. When enabled, rules are cached between invocations to reduce DynamoDB read costs and improve performance. | `bool` | `true` | no |
+| <a name="input_rules_cache_ttl_seconds"></a> [rules\_cache\_ttl\_seconds](#input\_rules\_cache\_ttl\_seconds) | Time-to-live (TTL) in seconds for cached compliance rules. After this period, the cache expires and rules are re-fetched from DynamoDB. Default is 300 seconds (5 minutes). | `number` | `300` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to the Lambda function. | `map(string)` | `{}` | no |
 
 ## Outputs

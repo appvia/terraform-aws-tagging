@@ -105,6 +105,7 @@ python-tests:
 	@echo "--> Running Python tests"
 	@if command -v pytest >/dev/null 2>&1; then \
 		pytest modules/validation/assets/handler_test.py -v; \
+		pytest modules/organizations/assets/handler_test.py -v; \
 	else \
 		echo "pytest not found. Install with: pip install pytest"; \
 		exit 1; \

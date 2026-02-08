@@ -193,7 +193,19 @@ After deploying this example:
 
 ### AWS CLI
 
-```Troubleshooting
+```bash
+# Get non-compliant resources
+aws configservice get-compliance-details-by-config-rule \
+  --config-rule-name tagging-compliance \
+  --compliance-types NON_COMPLIANT
+
+# View Lambda execution logs
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/tagging-compliance-evaluator \
+  --filter-pattern "compliance_type"
+```
+
+## Troubleshooting
 
 ### Resource Not Evaluated
 
@@ -221,24 +233,6 @@ To destroy all resources:
 terraform destroy
 ```
 
-**Note**: This will delete the Config rule and Lambda function, but not the central DynamoDB table (managed separately)
-  --config-rule-name tagging-compliance \
-  --compliance-types NON_COMPLIANT
-
-# View Lambda execution logs
-aws logs filter-log-events \
-  --log-group-name /aws/lambda/tagging-compliance-evaluator \
-  --filter-pattern "compliance_type"
-```
-
-## Cleanup
-
-To destroy all resources:
-
-```bash
-terraform destroy
-```
-
 **Warning**: This will delete the DynamoDB table and all rules.
 
 <!-- BEGIN_TF_DOCS -->
@@ -248,9 +242,14 @@ No providers.
 
 ## Inputs
 
-No inputs.
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| <a name="input_dynamodb_table_arn"></a> [dynamodb\_table\_arn](#input\_dynamodb\_table\_arn) | The ARN of the DynamoDB table to store tags for AWS resources. | `string` | n/a | yes |
+| <a name="input_organizations_table_arn"></a> [organizations\_table\_arn](#input\_organizations\_table\_arn) | The ARN of the DynamoDB table to store organization metadata. | `string` | n/a | yes |
 
 ## Outputs
 
-No outputs.
+| Name | Description |
+|------|-------------|
+| <a name="output_config_rule_arn"></a> [config\_rule\_arn](#output\_config\_rule\_arn) | The ARN of the AWS Config rule created for tagging compliance. |
 <!-- END_TF_DOCS -->

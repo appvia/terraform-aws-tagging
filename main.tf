@@ -1,24 +1,24 @@
 ## Provision a Dynamodb table to store tags for AWS resources
 resource "aws_dynamodb_table" "compliance" {
-  name           = var.dynamodb_table_name
-  billing_mode   = var.dynamodb_billing_mode
+  name           = var.compliance.table.name
+  billing_mode   = var.compliance.table.billing_mode
   hash_key       = "ResourceType"
   range_key      = "RuleId"
-  read_capacity  = var.dynamodb_table_read_capacity
+  read_capacity  = var.compliance.table.read_capacity
   tags           = var.tags
-  write_capacity = var.dynamodb_table_write_capacity
+  write_capacity = var.compliance.table.write_capacity
 
   dynamic "server_side_encryption" {
-    for_each = var.dynamodb_table_kms_key_id == null ? [] : [1]
+    for_each = var.compliance.table.kms_key_id == null ? [] : [1]
 
     content {
       enabled     = true
-      kms_key_arn = var.dynamodb_table_kms_key_id
+      kms_key_arn = var.compliance.table.kms_key_id
     }
   }
 
   point_in_time_recovery {
-    enabled = var.dynamodb_table_point_in_time_recovery_enabled
+    enabled = var.compliance.table.point_in_time_recovery_enabled
   }
 
   attribute {
@@ -39,6 +39,7 @@ data "aws_iam_policy_document" "dynamodb_access" {
     effect = "Allow"
     actions = [
       "dynamodb:Get*",
+      "dynamodb:Query",
       "dynamodb:Scan",
     ]
     principals {
@@ -50,12 +51,12 @@ data "aws_iam_policy_document" "dynamodb_access" {
     ]
 
     dynamic "condition" {
-      for_each = var.enable_organization_access ? [1] : []
+      for_each = var.enable_organizations ? [1] : []
 
       content {
         test     = "StringEquals"
         variable = "aws:PrincipalOrgID"
-        values   = [local.organization_id]
+        values   = [local.organizations_id]
       }
     }
   }

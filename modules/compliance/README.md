@@ -2,7 +2,9 @@
 
 ## Introduction
 
-This Terraform module manages tagging compliance rules by storing them in a DynamoDB table. These rules define which tags are required or optional for AWS resources, specify permitted tag values, and can be scoped to specific AWS accounts or resource types. The rules stored by this module are consumed by the AWS Config custom rule (see the `config` module) to evaluate resource compliance.
+This Terraform module manages tagging compliance rules by storing them in a DynamoDB table. These rules define which tags are required or optional for AWS resources, specify permitted tag values, and can be scoped to specific AWS accounts, organizational paths, or resource types. The rules stored by this module are consumed by the AWS Config custom rule (see the `config` module) to evaluate resource compliance.
+
+When you use `OrganizationalPaths` in rules, you must enable the Organizations integration by setting `var.organizations`. This creates a separate DynamoDB table that stores account metadata, which is populated by a Lambda function that calls the AWS Organizations API to retrieve account information (including organizational paths). The compliance evaluation uses that table to match `OrganizationalPaths`.
 
 ### Key Features
 
@@ -10,7 +12,7 @@ This Terraform module manages tagging compliance rules by storing them in a Dyna
 - **Flexible Rule Definitions**: Support for:
   - Required vs. optional tags
   - Specific permitted values or regex patterns
-  - Account-scoped or organization-wide rules
+  - Account-scoped or organizational path-scoped rules
   - Resource-type specific or wildcard rules
   - Enable/disable rules without deletion
 - **DynamoDB Integration**: Automatically stores rules in the format expected by AWS Config Lambda
@@ -51,6 +53,15 @@ module "tagging_compliance_rules" {
       ValuePattern = "^[a-zA-Z0-9._%+-]+@company\\.com$"
       AccountIds   = ["*"]
       Enabled      = true
+    },
+    {
+      RuleId               = "require-owner-email-production"
+      ResourceType         = "AWS::*"
+      Tag                  = "Owner"
+      Required             = true
+      ValuePattern         = "^[a-zA-Z0-9._%+-]+@company\\.com$"
+      OrganizationalPaths  = ["/root/workloads/production"]
+      Enabled              = true
     }
   ]
 }
@@ -125,6 +136,7 @@ Each rule object supports the following fields:
 | `ResourceType` | string | **Yes** | — | AWS resource type (e.g., `"AWS::EC2::Instance"`, `"AWS::EC2::*"`). Use `"*"` for all types. |
 | `Tag` | string | **Yes** | — | Tag key to evaluate (e.g., `"Environment"`, `"Owner"`). |
 | `AccountIds` | list(string) | No | `["*"]` | List of AWS account IDs. Use `["*"]` for all accounts. |
+| `OrganizationalPaths` | list(string) | No | `[]` | List of AWS Organizations paths (e.g., `["/root/workloads/production"]`). Use `["*"]` for all OUs. Requires `var.organizations` to be enabled. |
 | `Enabled` | bool | No | `true` | Whether the rule is active. Set to `false` to temporarily disable. |
 | `Required` | bool | No | `true` | Whether the tag must be present. Set to `false` to only validate if present. |
 | `ValuePattern` | string | No | `null` | Optional regex pattern for validating tag values. Takes precedence over `Values`. |
@@ -329,6 +341,48 @@ module "tagging_rules" {
 }
 ```
 
+### Example 7: Organizational Path-Specific Rules
+
+```hcl
+module "tagging_rules" {
+  source = "./modules/compliance"
+
+  dynamodb_table_name = "tagging-compliance-rules"
+
+  rules = [
+    # Production workloads require strict cost tracking
+    {
+      RuleId              = "prod-ou-cost-center"
+      ResourceType        = "AWS::*"
+      Tag                 = "CostCenter"
+      Required            = true
+      ValuePattern        = "^CC-[0-9]{4}$"  # Must match CC-NNNN format
+      OrganizationalPaths = ["/root/workloads/production"]
+      Enabled             = true
+    },
+    # Development OUs have flexible tagging
+    {
+      RuleId              = "dev-ou-owner"
+      ResourceType        = "AWS::*"
+      Tag                 = "Owner"
+      Required            = false  # Optional in dev
+      OrganizationalPaths = ["/root/workloads/development", "/root/sandboxes"]
+      Enabled             = true
+    },
+    # Security OU requires compliance tags
+    {
+      RuleId              = "security-ou-compliance"
+      ResourceType        = "AWS::*"
+      Tag                 = "ComplianceLevel"
+      Required            = true
+      Values              = ["high", "critical"]
+      OrganizationalPaths = ["/root/security"]
+      Enabled             = true
+    }
+  ]
+}
+```
+
 ## Integration with Config Module
 
 This module is designed to work with the `config` module. Here's a complete example:
@@ -448,7 +502,7 @@ Rules stored by this module are evaluated by the AWS Config Lambda function as f
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_dynamodb_table_name"></a> [dynamodb\_table\_name](#input\_dynamodb\_table\_name) | The name of the DynamoDB table to store tags for AWS resources. | `string` | n/a | yes |
-| <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds   = optional(list(string), ["*"])<br/>    Enabled      = optional(bool, true)<br/>    Required     = optional(bool, true)<br/>    ResourceType = string<br/>    RuleId       = string<br/>    Tag          = string<br/>    ValuePattern = optional(string, "")<br/>    Values       = optional(list(string), [])<br/>  }))</pre> | n/a | yes |
+| <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds          = optional(list(string), ["*"])<br/>    Enabled             = optional(bool, true)<br/>    OrganizationalPaths = optional(list(string), [])<br/>    Required            = optional(bool, true)<br/>    ResourceType        = string<br/>    RuleId              = string<br/>    Tag                 = string<br/>    ValuePattern        = optional(string, "")<br/>    Values              = optional(list(string), [])<br/>  }))</pre> | n/a | yes |
 
 ## Outputs
 

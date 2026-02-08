@@ -2,17 +2,18 @@
 
 ## Description
 
-This example demonstrates the simplest possible deployment of the tagging compliance framework. It creates only the central DynamoDB table that will store tagging compliance rules.
-
-This is typically the first step in setting up the framework - creating the central rules repository before deploying the evaluation infrastructure (Lambda functions, Config rules, etc.) in subsequent steps.
+This example demonstrates the simplest possible deployment of the tagging compliance framework. Here we are deploy the compliance rules and account metadata table into the account
 
 ## What This Example Creates
 
-- **DynamoDB Table**: A table named `tagging-compliance` with:
+- **DynamoDB Table (Compliance)**: A table named `tagging-compliance` with:
   - `PAY_PER_REQUEST` billing mode (no capacity planning required)
-  - `ResourceType` as the hash key
-  - Organization-wide read access policy (if organization_id is provided)
+  - `ResourceType` and `RuleId` as composite key
+  - Organization-wide read access policy (when organizations enabled)
   - Encryption at rest using AWS-managed keys
+
+- **AWS Config Rule**: Evaluates AWS resources against tagging rules
+- **Lambda Function**: Validates resource tags against compliance rules stored in DynamoDB
 
 ## Usage
 
@@ -60,9 +61,19 @@ To customize this example:
 module "compliance" {
   source = "../../"
 
-  dynamodb_table_name   = "my-custom-table-name"
-  dynamodb_billing_mode = "PROVISIONED"  # If you prefer provisioned capacity
-  organization_id       = "o-abc123def"  # Your AWS Organization ID
+  # Configure the compliance DynamoDB table
+  compliance = {
+    table = {
+      name         = "my-custom-table-name"
+      billing_mode = "PROVISIONED"  # If you prefer provisioned capacity
+      read_capacity  = 5
+      write_capacity = 5
+    }
+  }
+
+  # Enable organizations support
+  enable_organizations = true
+  organizations_id     = "o-abc123def"  # Your AWS Organization ID
 
   tags = {
     Environment = "production"

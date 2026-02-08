@@ -32,10 +32,48 @@ config_client = boto3.client("config")
 # within the same container (warm start). This significantly reduces DynamoDB reads.
 # Thread safety note: AWS Lambda Python runtime is single-threaded per container,
 # so no locking mechanism is needed for this module-level variable.
-_rules_cache: dict[str, Any] = {
+_cache: dict[str, Any] = {
     "rules": None,
-    "timestamp": None,
+    "rules_timestamp": None,
 }
+
+
+@dataclass
+class AccountMetadata:
+    # The AWS account ID that owns the resource being evaluated.
+    AccountId: str
+    # Name of the AWS account that owns the resource being evaluated.
+    AccountName: str
+    # The organizational unit path of the AWS account that owns the resource being evaluated (e.g. "root/engineering/platform").
+    OUPath: str
+    # The status of the AWS account that owns the resource being evaluated (e.g. "ACTIVE", "SUSPENDED").
+    Status: str
+
+    @classmethod
+    def parse(cls, raw: Dict[str, Any]) -> "AccountMetadata":
+        """Parse a raw DynamoDB item into an AccountMetadata object."""
+
+        logger.debug(
+            "Parsing account metadata from DynamoDB item",
+            extra={
+                "action": "AccountMetadata.parse",
+                "raw_item": raw,
+            },
+        )
+
+        # Ensure we have the required fields in the raw item
+        for field_name in ["AccountId", "AccountName", "OUPath", "Status"]:
+            if raw.get(field_name, None) is None:
+                raise ValueError(
+                    f"Item is missing required field '{field_name}' for AccountMetadata."
+                )
+
+        return cls(
+            AccountId=raw.get("AccountId", {}).get("S", ""),
+            AccountName=raw.get("AccountName", {}).get("S", ""),
+            OUPath=raw.get("OUPath", {}).get("S", ""),
+            Status=raw.get("Status", {}).get("S", ""),
+        )
 
 
 # Resource class representing the AWS resource being evaluated, extracted from the AWS Config event.
@@ -50,7 +88,32 @@ class Resource:
     # The tags associated with the resource being evaluated, represented as a dict
     Tags: Dict[str, str] = field(default_factory=dict)
 
-    def contains(self, tag_key: str) -> bool:
+    @classmethod
+    def parse(cls, raw: Dict[str, Any]) -> "Resource":
+        """Parse the AWS Config configuration item to return a Resource object."""
+        # Check for the following items
+        for field_name in [
+            "awsAccountId",
+            "resourceType",
+            "resourceId",
+            "configuration",
+        ]:
+            if raw.get(field_name, None) is None:
+                raise ValueError(
+                    f"Configuration item is missing required field '{field_name}', cannot evaluate resource."
+                )
+
+        # Retrieve the tags from the configuration item, which are nested under the "configuration" key
+        configuration = raw.get("configuration", {})
+
+        return cls(
+            AccountId=raw.get("awsAccountId", None),
+            ResourceType=raw.get("resourceType", None),
+            ResourceId=raw.get("resourceId", None),
+            Tags=configuration.get("tags", {}),
+        )
+
+    def contains_tag(self, tag_key: str) -> bool:
         """
         Check if the resource contains a specific tag key.
 
@@ -75,7 +138,7 @@ class Resource:
             permitted values, False otherwise.
         """
 
-        return self.contains(tag) and self.Tags[tag] in permitted
+        return self.contains_tag(tag) and self.Tags[tag] in permitted
 
     def is_value_pattern(self, tag: str, pattern: str) -> bool:
         """
@@ -90,7 +153,7 @@ class Resource:
             False otherwise.
         """
 
-        return self.contains(tag) and re.match(pattern, self.Tags[tag]) is not None
+        return self.contains_tag(tag) and re.match(pattern, self.Tags[tag]) is not None
 
 
 # Rule dict representing a tagging compliance rule retrieved from the DynamoDB table.
@@ -100,6 +163,8 @@ class Rule:
     AccountIds: List[str] = field(default_factory=lambda: ["*"])
     # Whether the rule is enabled or disabled. Disabled rules are ignored.
     Enabled: bool = True
+    # OrganizationalPaths is an optional list of organizational unit paths that the rule applies to. A value of "*" indicates all OUs.
+    OrganizationalPaths: List[str] = field(default_factory=list)
     # Whether the rule requires the tag to be present (True) or just checks if the tag value is valid if the tag is present (False).
     Required: bool = True
     # The AWS resource type that the rule applies to (e.g. "AWS::EC2::Instance").
@@ -113,6 +178,24 @@ class Rule:
     # An optional list of specific tag values that are considered compliant. If provided, the tag value must be one of these values to be compliant.
     Values: List[str] = field(default_factory=list)
 
+    @classmethod
+    def parse(cls, raw: Dict[str, Any]) -> "Rule":
+        """Parse a raw DynamoDB item into a Rule object."""
+
+        return cls(
+            AccountIds=json.loads(raw.get("AccountIds", {}).get("S", '["*"]')),
+            Enabled=raw.get("Enabled", {}).get("B", True),
+            OrganizationalPaths=json.loads(
+                raw.get("OrganizationalPaths", {}).get("S", "[]")
+            ),
+            Required=raw.get("Required", {}).get("B", True),
+            ResourceType=raw.get("ResourceType", {}).get("S", ""),
+            RuleId=raw.get("RuleId", {}).get("S", ""),
+            Tag=raw.get("Tag", {}).get("S", ""),
+            ValuePattern=raw.get("ValuePattern", {}).get("S", ""),
+            Values=json.loads(raw.get("Values", {}).get("S", "[]")),
+        )
+
     def has_values(self) -> bool:
         """Check if the rule has specific compliant values defined."""
         return bool(self.Values) and len(self.Values) > 0
@@ -120,6 +203,16 @@ class Rule:
     def has_value_pattern(self) -> bool:
         """Check if the rule has a compliant value pattern defined."""
         return bool(self.ValuePattern) and len(self.ValuePattern) > 0
+
+    def has_organizational_paths(self) -> bool:
+        """Check if the rule has organizational paths defined."""
+        return bool(self.OrganizationalPaths) and len(self.OrganizationalPaths) > 0
+
+    def is_inside_organizational_path(self, path: str) -> bool:
+        """Check if the resource's account is within any of the organizational paths"""
+        return "*" in self.OrganizationalPaths or any(
+            path.startswith(org_path) for org_path in self.OrganizationalPaths
+        )
 
 
 @dataclass
@@ -129,7 +222,7 @@ class Evaluation:
     # The tag key that was evaluated.
     TagKey: str = ""
     # The tag value that was evaluated (or null if the tag is not present on the resource).
-    TagValue: str = ""
+    TagValue: str | None = None
     # An optional string providing details about the evaluation of this rule.
     Annotation: str = ""
     # The rule id if any specific rule was evaluated, which can be used for debugging
@@ -231,99 +324,6 @@ class Evaluations:
         ]
 
 
-def parse_configuration_item(item: Dict[str, Any]) -> Resource:
-    """
-    Parse the configuration item from the AWS Config event into a Resource dict.
-
-    Args:
-      configuration_item: The configuration item from the AWS Config event, containing resource details.
-
-    Returns:
-      A Resource dict containing the relevant information extracted from the configuration item.
-    """
-
-    # Check for the following items
-    for field_name in ["awsAccountId", "resourceType", "resourceId", "configuration"]:
-        if item.get(field_name, None) is None:
-            logger.error(
-                "Configuration item is missing required field",
-                extra={
-                    "action": "parse_configuration_item",
-                    "item": item,
-                    "missing_field": field_name,
-                },
-            )
-            raise ValueError(
-                f"Configuration item is missing required field '{field_name}', cannot evaluate resource."
-            )
-
-    # Retrieve the tags from the configuration item, which are nested under the "configuration" key
-    configuration = item.get("configuration", {})
-
-    return Resource(
-        AccountId=item.get("awsAccountId", None),
-        ResourceType=item.get("resourceType", None),
-        ResourceId=item.get("resourceId", None),
-        Tags=configuration.get("tags", {}),
-    )
-
-
-def parse_rule(raw: Dict[str, Any]) -> Rule:
-    """
-    Parse a raw DynamoDB item into a Rule dict.
-
-    Args:
-      raw: A raw DynamoDB item representing a tagging rule.
-
-    Returns:
-      A Rule dict representing the tagging rule with keys:
-        - AccountIds: List of account IDs the rule applies to.
-        - Enabled: Whether the rule is enabled.
-        - Required: Whether the tag is required or just validated if present.
-        - ResourceType: The AWS resource type the rule applies to.
-        - RuleId: An identifier for the rule, used for logging and debugging purposes.
-        - Tag: The key of the tag that the rule checks for.
-        - ValuePattern: An optional regex pattern that the tag value must match.
-        - Values: An optional list of specific tag values that are considered compliant.
-    """
-
-    logger.debug(
-        "Parsing raw DynamoDB item into Rule dict",
-        extra={
-            "raw_item": raw,
-        },
-    )
-
-    # Parse AccountIds - it's a JSON-encoded string list in DynamoDB
-    account_ids_raw = raw.get("AccountIds", {}).get("S", "")
-    try:
-        account_ids = json.loads(account_ids_raw) if account_ids_raw else ["*"]
-    except json.JSONDecodeError:
-        logger.warning(
-            f"Failed to parse AccountIds JSON: {account_ids_raw}, defaulting to ['*']"
-        )
-        account_ids = ["*"]
-
-    # Parse Values - it's a JSON-encoded string list in DynamoDB
-    values_raw = raw.get("Values", {}).get("S", "")
-    try:
-        values = json.loads(values_raw) if values_raw else []
-    except json.JSONDecodeError:
-        logger.warning(f"Failed to parse Values JSON: {values_raw}, defaulting to []")
-        values = []
-
-    return Rule(
-        AccountIds=account_ids,
-        Enabled=raw.get("Enabled", {}).get("B", True),
-        Required=raw.get("Required", {}).get("B", True),
-        ResourceType=raw.get("ResourceType", {}).get("S", ""),
-        RuleId=raw.get("RuleId", {}).get("S", ""),
-        Tag=raw.get("Tag", {}).get("S", ""),
-        ValuePattern=raw.get("ValuePattern", {}).get("S", ""),
-        Values=values,
-    )
-
-
 # Default logger for all log messages in this module, configured to emit JSON-formatted logs to stdout.
 logger = logging.getLogger(__name__)
 # Set the log level from the environment variable (set by Terraform) or default to INFO.
@@ -333,8 +333,8 @@ logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
 class _JSONFormatter(logging.Formatter):
     """Emit each log record as a single JSON object."""
 
-    # Standard fields that are part of every LogRecord
-    _STANDARD_RECORD_FIELDS = {
+    # Standard Python logging record fields to exclude from output
+    _EXCLUDE_FIELDS = {
         "name",
         "msg",
         "args",
@@ -343,20 +343,17 @@ class _JSONFormatter(logging.Formatter):
         "funcName",
         "levelname",
         "levelno",
-        "lineno",
         "module",
         "msecs",
-        "message",
         "pathname",
         "process",
         "processName",
         "relativeCreated",
+        "stack_info",
         "thread",
         "threadName",
         "exc_info",
         "exc_text",
-        "stack_info",
-        "asctime",
         "taskName",
     }
 
@@ -368,13 +365,14 @@ class _JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # Include extra fields from the record
+        # Include only extra fields (exclude standard logging record attributes)
         for key, value in record.__dict__.items():
-            if key not in self._STANDARD_RECORD_FIELDS:
+            if key not in self._EXCLUDE_FIELDS:
                 log_entry[key] = value
 
         if record.exc_info and record.exc_info[0] is not None:
             log_entry["exception"] = self.formatException(record.exc_info)
+
         return json.dumps(log_entry, default=str)
 
 
@@ -384,8 +382,136 @@ logger.handlers = [_handler]
 logger.propagate = False
 
 
+def get_cached(key: str, ttl_seconds: int = 3600) -> Any | None:
+    """
+    Retrieve a value from the cache if it exists and is not expired.
+
+    Args:
+        key: The key of the cached value to retrieve.
+
+    Returns:
+        The cached value if it exists and is not expired, or None if the cache is missing or expired.
+    """
+
+    now = datetime.now(timezone.utc).timestamp()
+    cache_timestamp_key = f"{key}_timestamp"
+
+    if (
+        _cache.get(key) is not None
+        and _cache.get(cache_timestamp_key) is not None
+        and (now - _cache[cache_timestamp_key]) < ttl_seconds
+    ):
+        logger.info(
+            "Cache hit for key",
+            extra={
+                "action": "get_cached",
+                "key": key,
+                "cache_age_seconds": round(now - _cache[cache_timestamp_key], 2),
+            },
+        )
+        return _cache[key]
+    else:
+        logger.info(
+            "Cache miss or expired for key",
+            extra={
+                "action": "get_cached",
+                "key": key,
+            },
+        )
+        return None
+
+
+def set_cached(key: str, value: Any) -> None:
+    """
+    Set a value in the cache with the current timestamp.
+
+    Args:
+        key: The key of the cached value to set.
+        value: The value to cache.
+    """
+
+    logger.debug(
+        "Setting cache value for key",
+        extra={
+            "action": "set_cached",
+            "key": key,
+        },
+    )
+
+    now = datetime.now(timezone.utc).timestamp()
+    _cache[key] = value
+    _cache[f"{key}_timestamp"] = now
+
+
+def get_account(
+    account_id: str,
+    table_arn: str,
+    enable_cache: bool = False,
+    ttl_seconds: int = 21600,
+) -> AccountMetadata:
+    """
+    Retrieve organizational unit paths for accounts from cache or DynamoDB with automatic cache expiration.
+
+    Args:
+        account_id: The AWS account ID to retrieve organizational paths for.
+        enable_cache: If True, enable the cache and fetch from cache if valid.
+        table_arn: The ARN of the DynamoDB table containing organizational data.
+
+    Returns:
+        An AccountMetadata object containing the organizational data for the specified account.
+    """
+
+    # Extract the table name from the ARN (format: arn:aws:dynamodb:region:account-id:table/TableName)
+    logger.info(
+        "Retrieving account data",
+        extra={
+            "action": "get_account",
+            "enable_cache": enable_cache,
+            "table_arn": table_arn,
+            "ttl_seconds": ttl_seconds,
+        },
+    )
+    # Use an account id as a cache key to ensure we can cache organizational data
+    # for multiple accounts if needed in the future
+    cache_key = f"{account_id}_account"
+
+    # Check if caching is enabled before attempting to use the cache
+    if enable_cache:
+        cached = get_cached(cache_key, ttl_seconds)
+        if cached is not None:
+            return cached
+
+    # Retrieve organizational data for this account
+    response = table_client.query(
+        TableName=table_arn,
+        KeyConditionExpression="AccountId = :account_id",
+        ExpressionAttributeValues={":account_id": {"S": account_id}},
+    )
+    if response.get("Count", 0) == 0:
+        logger.warning(
+            "No organizational data found for account",
+            extra={
+                "action": "get_account",
+                "account_id": account_id,
+                "table_arn": table_arn,
+            },
+        )
+        raise ValueError(
+            f"No organizational data found for account {account_id} in table {table_arn}."
+        )
+
+    # Parse the organizational data into an AccountMetadata object
+    account = AccountMetadata.parse(response["Items"][0])
+    if enable_cache:
+        set_cached(cache_key, account)
+
+    return account
+
+
 def get_rules(
-    table_arn: str, enable_cache: bool = False, cache_ttl_seconds: int = 3600
+    table_arn: str,
+    enable_cache: bool = False,
+    ttl_seconds: int = 3600,
 ) -> List[Rule]:
     """
     Retrieve tagging rules from cache or DynamoDB with automatic cache expiration.
@@ -396,86 +522,46 @@ def get_rules(
     up to the cache TTL to propagate to all Lambda instances, but this is usually an acceptable
     tradeoff for the cost savings.
 
-    Caching behavior can be controlled via:
-    - enable_cache parameter for per-invocation override (e.g., from event payload)
-
     Args:
-      table_arn: The ARN of the DynamoDB table containing tagging rules.
-      enable_cache: If True, enable the cache and fetch from cache if valid.
+        table_arn: The ARN of the DynamoDB table containing tagging rules.
+        enable_cache: If True, enable the cache and fetch from cache if valid.
+        ttl_seconds: The time-to-live for cache entries in seconds.
 
     Returns:
-      A list of Rule objects representing the tagging rules.
+        A list of Rule objects representing the tagging rules.
     """
-
-    # Extract the table name from the ARN (format: arn:aws:dynamodb:region:account-id:table/TableName)
-    table_name = table_arn.split("/")[-1]
 
     logger.info(
         "Retrieving compliance rules",
         extra={
             "action": "get_rules",
-            "cache_ttl_seconds": cache_ttl_seconds,
             "enable_cache": enable_cache,
-            "table_name": table_name,
+            "table_arn": table_arn,
+            "ttl_seconds": ttl_seconds,
         },
     )
-
-    # Get the current time to compare against the cache timestamp for expiration
-    now = datetime.now(timezone.utc).timestamp()
-
     # Check if caching is enabled before attempting to use the cache
     if enable_cache:
-        if (
-            _rules_cache["rules"] is not None
-            and _rules_cache["timestamp"] is not None
-            and (now - _rules_cache["timestamp"]) < cache_ttl_seconds
-        ):
-            logger.info(
-                "Cache has results, using cached rules",
-                extra={
-                    "action": "get_rules",
-                    "cache_age_seconds": round(now - _rules_cache["timestamp"], 2),
-                },
-            )
-
-            return _rules_cache["rules"]
-
-        else:
-            logger.info(
-                "Cache miss or expired, fetching from DynamoDB",
-                extra={
-                    "action": "get_rules",
-                    "cache_ttl_seconds": cache_ttl_seconds,
-                    "enable_cache": enable_cache,
-                },
-            )
+        cached = get_cached("rules", ttl_seconds)
+        if cached is not None:
+            return cached
 
     rules = []
     # Retrieve only enabled rules from the DynamoDB table with server-side filtering to reduce
     # data transfer and parsing overhead. This can reduce costs and improve performance significantly
     # when there are many disabled rules in the table.
     response = table_client.scan(
-        TableName=table_name,
+        TableName=table_arn,
         FilterExpression="Enabled = :enabled_value",
         ExpressionAttributeValues={":enabled_value": {"BOOL": True}},
     )
     # Iterate over the items in the response and parse each one into a tagging rule dict.
     for item in response.get("Items", []):
-        rules.append(parse_rule(item))
+        rules.append(Rule.parse(item))
 
     # Add the results to the cache if required
     if enable_cache:
-        _rules_cache["rules"] = rules
-        _rules_cache["timestamp"] = now
-
-        logger.info(
-            "Compliance rules cached",
-            extra={
-                "action": "get_rules",
-                "cache_ttl_seconds": cache_ttl_seconds,
-                "rule_count": len(rules),
-            },
-        )
+        set_cached("rules", rules)
 
     return rules
 
@@ -483,28 +569,80 @@ def get_rules(
 def find_matching_rules(
     rules: List[Rule],
     resource: Resource,
+    account: AccountMetadata | None = None,
 ) -> List[Rule]:
     """
     Find all tagging rules that apply to the given resource type.
 
     Args:
-      rules: A list of dicts representing the tagging rules to check against.
+      rules: A list of Rule objects representing the tagging rules to check against.
       resource: The AWS resource type being evaluated (e.g. "AWS::EC2::Instance").
 
     Returns:
-      A list of dicts representing the tagging rules that apply to the resource type.
+      A list of Rule objects representing the tagging rules that apply to the resource type.
     """
+
+    logger.info(
+        "Finding matching rules for resource",
+        extra={
+            "action": "find_matching_rules",
+            "account_id": resource.AccountId,
+            "resource_id": resource.ResourceId,
+            "resource_type": resource.ResourceType,
+        },
+    )
 
     # A list of rules that apply to the resource type being evaluated.
     matching_rules = []
 
     for rule in rules:
+        extras = {
+            "action": "find_matching_rules",
+            "account_id": resource.AccountId,
+            "accounts": account is not None,
+            "resource_id": resource.ResourceId,
+            "resource_type": resource.ResourceType,
+            "rule.account_ids": rule.AccountIds,
+            "rule.enabled": rule.Enabled,
+            "rule.organizational_paths": rule.OrganizationalPaths,
+            "rule.resource_type": rule.ResourceType,
+            "rule.ruleId": rule.RuleId,
+        }
+        if account is not None:
+            extras.update(
+                {
+                    "account.name": account.AccountName,
+                    "account.ou_path": account.OUPath,
+                    "account.status": account.Status,
+                }
+            )
+
+        logger.debug(
+            "Checking rule against resource",
+            extra=extras,
+        )
+
         # First we check if the rule is enabled, if not we skip it.
         if not rule.Enabled:
             continue
+
         # Next we check if the rule matches the account or wildcard, if not we skip it.
-        if rule.AccountIds != ["*"] and resource.AccountId not in rule.AccountIds:
+        if (
+            len(rule.AccountIds) > 0
+            and rule.AccountIds != ["*"]
+            and resource.AccountId not in rule.AccountIds
+        ):
             continue
+
+        # Next check the organizational paths if defined, if the resource's account is
+        # not within any of the organizational paths, we skip it.
+        if (
+            account is not None
+            and rule.has_organizational_paths()
+            and not rule.is_inside_organizational_path(account.OUPath)
+        ):
+            continue
+
         # Next we check if the rule matches the resource type or wildcard, if not we skip it.
         # Support wildcard matching: "AWS::EC2::*" matches "AWS::EC2::Instance"
         if not (
@@ -514,6 +652,17 @@ def find_matching_rules(
             and resource.ResourceType.startswith(rule.ResourceType[:-1])
         ):
             continue
+
+        logger.debug(
+            "Adding matching rule for resource",
+            extra={
+                "action": "find_matching_rules",
+                "account_id": resource.AccountId,
+                "resource_id": resource.ResourceId,
+                "resource_type": resource.ResourceType,
+                "rule.ruleId": rule.RuleId,
+            },
+        )
 
         # We have a match, lets add it to the list of matching rules for this resource type
         matching_rules.append(rule)
@@ -540,11 +689,11 @@ def validate_compliance(
     Check if a resource complies with the given tagging rules.
 
     Args:
-        rules: A list of Rule dicts representing the tagging rules to check against.
-        resource: A Resource dict representing the AWS resource being evaluated.
+        rules: A list of Rule objects representing the tagging rules to check against.
+        resource: A Resource object representing the AWS resource being evaluated.
 
     Returns:
-        A list of RuleEvaluation dicts representing the evaluation of each rule against the resource,
+        A list of RuleEvaluation objects representing the evaluation of each rule against the resource,
         including whether the resource is compliant with each rule and any relevant annotations.
     """
 
@@ -566,13 +715,15 @@ def validate_compliance(
         # Get the tag in question from the rule
         tag = rule.Tag
         # Check if the tag is present on the resource and get its value (or null if not present)
-        if not resource.contains(tag) and rule.Required:
+        if not resource.contains_tag(tag) and rule.Required:
             conditions.add_non_compliant(
                 annotation=f"Required tag '{tag}' missing",
                 rule=rule,
             )
 
-        if resource.contains(tag):
+        # If the tag is present, check if it matches the permitted values if defined,
+        # and check if it matches the value pattern if defined.
+        if resource.contains_tag(tag):
             if rule.has_values() and not resource.is_value(tag, rule.Values):
                 conditions.add_non_compliant(
                     annotation=f"Tag '{tag}' doesn't match permitted values: {rule.Values}",
@@ -588,7 +739,7 @@ def validate_compliance(
                     rule=rule,
                     value=resource.Tags[tag],
                 )
-        elif not rule.Required and not resource.contains(tag):
+        elif not rule.Required and not resource.contains_tag(tag):
             # For optional tags that are not present, mark as compliant
             conditions.add_compliant(
                 annotation="Optional tag not present (compliant)",
@@ -674,7 +825,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
 
     Args:
         event: The AWS Config event payload containing details about the resource
-            being evaluated and the rule parameters.
+               being evaluated and the rule parameters.
         context: The AWS Lambda execution context (not used in this function).
 
     Returns:
@@ -690,6 +841,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
     account_id = event.get("accountId") or os.environ.get("ACCOUNT_ID")
     # Get the table ARN from the environment variable (set by Terraform)
     table_arn = event.get("table_arn") or os.environ.get("TABLE_ARN")
+    # Get the account metadata, which includes organizational unit paths, from the DynamoDB table.
+    accounts_table_arn = event.get("accounts_table_arn") or os.environ.get(
+        "TABLE_ARN_ORGANIZATIONS", None
+    )
+    # Get the result token from the event, which is used to report compliance results back to AWS Config.
+    token = event["resultToken"]
+    # Indicates the accounts metadata is enabled
+    enable_accounts_metadata = accounts_table_arn is not None
+
     # Enable the rules caching from environment variable
     enable_cache = os.environ.get("RULES_CACHE_ENABLED", "false").lower() == "true"
     # Check if the event has an override to the cache setting
@@ -699,15 +859,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
     # Get the cache TTL from environment variable or default to 3600 seconds (1 hour)
     cache_ttl_seconds = int(os.environ.get("RULES_CACHE_TTL_SECONDS", "3600"))
 
-    # Get the result token from the event, which is used to report compliance results back to AWS Config.
-    token = event["resultToken"]
-
     logger.info(
         "Processing AWS Config event",
         extra={
             "action": "lambda_handler",
             "account_id": account_id,
-            "event": event,
+            "accounts_table_arn": accounts_table_arn,
+            "cache_ttl_seconds": cache_ttl_seconds,
+            "enable_cache": enable_cache,
         },
     )
 
@@ -716,9 +875,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
     # The configuration item contains details about the resource being evaluated.
     configuration_item = invoking_event.get("configurationItem", {})
     # Parse the configuration item into a Resource dict for easier handling.
-    resource = parse_configuration_item(configuration_item)
+    resource = Resource.parse(configuration_item)
     # Is a list of evaluations for each rule that applies to this resource,
-    # which we will populate as we evaluate the rules.
     evaluations = Evaluations()
 
     # If the resource is being deleted or was deleted without a recorded configuration, we cannot evaluate tags.
@@ -730,7 +888,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
             "Resource deleted, marking NOT_APPLICABLE",
             extra={
                 "action": "lambda_handler",
-                "account_id": account_id,
+                "account_id": resource.AccountId,
                 "resource_id": resource.ResourceId,
             },
         )
@@ -740,14 +898,37 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
         )
 
     else:
+        # We default to non account information
+        account = None
         # Retrieve the rules from the DynamoDB table
         rules = get_rules(
-            cache_ttl_seconds=cache_ttl_seconds,
             enable_cache=enable_cache,
             table_arn=table_arn,
+            ttl_seconds=cache_ttl_seconds,
         )
-        # Find matching rules for the resource
-        matching_rules = find_matching_rules(rules, resource)
+        # Retrieve the account metadata if needed
+        if enable_accounts_metadata:
+            account = get_account(
+                account_id=account_id,
+                table_arn=accounts_table_arn,
+                enable_cache=enable_cache,
+                ttl_seconds=21600,  # Cache account metadata for 6 hours by default
+            )
+        else:
+            logger.debug(
+                "Accounts metadata is disabled, skipping retrieval of account organizational data",
+                extra={
+                    "action": "lambda_handler",
+                    "account_id": account_id,
+                },
+            )
+
+        # Find matching compliance rules for
+        matching_rules = find_matching_rules(
+            rules=rules,
+            resource=resource,
+            account=account,
+        )
         # If there are no matching rules, we consider the resource NOT_APPLICABLE for tagging compliance and return early.
         if not matching_rules:
             logger.info(
@@ -803,7 +984,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
         annotation = "Resource is compliant with tagging rules."
     else:
         reasons = "; ".join(evaluations.get_non_compliance_reasons())
-        # If the annotation exceeds 256 characters, we truncate it to fit within AWS 
+        # If the annotation exceeds 256 characters, we truncate it to fit within AWS
         # Config limits, ensuring we don't cut off in the middle of a reason.
         if len(reasons) > 200:
             truncated_reasons = reasons[:197] + "..."

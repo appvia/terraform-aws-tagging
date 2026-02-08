@@ -142,14 +142,42 @@ def sample_dynamodb_item():
 class TestResource:
     """Tests for the Resource TypedDict class."""
 
+    def test_parse_valid_configuration_item(self):
+        """Test parsing a valid configuration item."""
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::EC2::Instance",
+            "resourceId": "i-0abcd1234efgh5678",
+            "configuration": {
+                "instanceId": "i-0abcd1234efgh5678",
+                "tags": {"Environment": "Production", "Name": "test-instance"},
+            },
+        }
+        resource = handler.Resource.parse(item)
+        assert resource.AccountId == "123456789012"
+        assert resource.ResourceType == "AWS::EC2::Instance"
+        assert resource.ResourceId == "i-0abcd1234efgh5678"
+        assert resource.Tags["Environment"] == "Production"
+
+    def test_parse_configuration_item_missing_field(self):
+        """Test parsing fails when required field is missing."""
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::EC2::Instance",
+            # Missing resourceId
+            "configuration": {"tags": {}},
+        }
+        with pytest.raises(ValueError, match="missing required field"):
+            handler.Resource.parse(item)
+
     def test_contains_tag_present(self, sample_resource):
-        """Test contains() returns True when tag is present."""
-        assert sample_resource.contains("Environment") is True
-        assert sample_resource.contains("CostCenter") is True
+        """Test contains_tag() returns True when tag is present."""
+        assert sample_resource.contains_tag("Environment") is True
+        assert sample_resource.contains_tag("CostCenter") is True
 
     def test_contains_tag_absent(self, sample_resource):
-        """Test contains() returns False when tag is absent."""
-        assert sample_resource.contains("NonExistentTag") is False
+        """Test contains_tag() returns False when tag is absent."""
+        assert sample_resource.contains_tag("NonExistentTag") is False
 
     def test_is_value_matching(self, sample_resource):
         """Test is_value() returns True when tag value is in permitted list."""
@@ -575,7 +603,7 @@ class TestAnnotationAggregation:
 
 
 class TestParseConfigurationItem:
-    """Tests for parse_configuration_item function."""
+    """Tests for Resource.parse() method."""
 
     def test_parse_valid_configuration_item(self):
         """Test parsing a valid configuration item."""
@@ -588,7 +616,7 @@ class TestParseConfigurationItem:
                 "tags": {"Environment": "Production", "Name": "test-instance"},
             },
         }
-        resource = handler.parse_configuration_item(item)
+        resource = handler.Resource.parse(item)
         assert resource.AccountId == "123456789012"
         assert resource.ResourceType == "AWS::EC2::Instance"
         assert resource.ResourceId == "i-0abcd1234"
@@ -603,7 +631,7 @@ class TestParseConfigurationItem:
             "configuration": {"tags": {}},
         }
         with pytest.raises(ValueError, match="missing required field"):
-            handler.parse_configuration_item(item)
+            handler.Resource.parse(item)
 
     def test_parse_configuration_item_no_tags(self):
         """Test parsing when configuration has no tags."""
@@ -613,16 +641,16 @@ class TestParseConfigurationItem:
             "resourceId": "i-0abcd1234",
             "configuration": {},
         }
-        resource = handler.parse_configuration_item(item)
+        resource = handler.Resource.parse(item)
         assert resource.Tags == {}
 
 
 class TestParseRule:
-    """Tests for parse_rule function."""
+    """Tests for Rule.parse() method."""
 
     def test_parse_complete_rule(self, sample_dynamodb_item):
         """Test parsing a complete DynamoDB rule item."""
-        rule = handler.parse_rule(sample_dynamodb_item)
+        rule = handler.Rule.parse(sample_dynamodb_item)
         assert rule.AccountIds == ["*"]
         assert rule.Enabled is True
         assert rule.Required is True
@@ -638,7 +666,7 @@ class TestParseRule:
             "ResourceType": {"S": "AWS::S3::Bucket"},
             "Tag": {"S": "DataClassification"},
         }
-        rule = handler.parse_rule(item)
+        rule = handler.Rule.parse(item)
         assert rule.AccountIds == ["*"]
         assert rule.Enabled is True
         assert rule.Required is True
@@ -738,6 +766,77 @@ class TestFindMatchingRules:
         ]
         matching = handler.find_matching_rules(rules, sample_resource)
         assert len(matching) == 2
+
+    def test_find_matching_rules_organizational_path_match(self, sample_resource):
+        """Test rules with organizational paths are matched when account OUPath matches."""
+        # Create a rule with organizational path restriction
+        rule = handler.Rule(
+            RuleId="ou-path-rule",
+            AccountIds=["*"],
+            Enabled=True,
+            Required=True,
+            ResourceType="AWS::EC2::*",
+            Tag="Environment",
+            ValuePattern="",
+            Values=[],
+            OrganizationalPaths=["root/Sandbox"],
+        )
+        # Create account metadata with matching OUPath
+        account = handler.AccountMetadata(
+            AccountId="123456789012",
+            AccountName="sandbox-account",
+            OUPath="root/Sandbox",
+            Status="ACTIVE",
+        )
+        matching = handler.find_matching_rules([rule], sample_resource, account)
+        assert len(matching) == 1
+        assert matching[0].RuleId == "ou-path-rule"
+
+    def test_find_matching_rules_organizational_path_mismatch(self, sample_resource):
+        """Test rules with organizational paths are excluded when account OUPath doesn't match."""
+        # Create a rule with organizational path restriction
+        rule = handler.Rule(
+            AccountIds=["*"],
+            Enabled=True,
+            Required=True,
+            ResourceType="AWS::EC2::*",
+            Tag="Environment",
+            ValuePattern="",
+            Values=[],
+            OrganizationalPaths=["root/Sandbox"],
+        )
+        # Create account metadata with non-matching OUPath
+        account = handler.AccountMetadata(
+            AccountId="123456789012",
+            AccountName="production-account",
+            OUPath="root/Production",
+            Status="ACTIVE",
+        )
+        matching = handler.find_matching_rules([rule], sample_resource, account)
+        assert len(matching) == 0
+
+    def test_find_matching_rules_organizational_path_wildcard(self, sample_resource):
+        """Test rules with organizational paths using wildcard match any account."""
+        # Create a rule with wildcard organizational paths
+        rule = handler.Rule(
+            AccountIds=["*"],
+            Enabled=True,
+            Required=True,
+            ResourceType="AWS::EC2::*",
+            Tag="Environment",
+            ValuePattern="",
+            Values=[],
+            OrganizationalPaths=["*"],
+        )
+        # Create account metadata with any OUPath
+        account = handler.AccountMetadata(
+            AccountId="123456789012",
+            AccountName="any-account",
+            OUPath="root/Sandbox",
+            Status="ACTIVE",
+        )
+        matching = handler.find_matching_rules([rule], sample_resource, account)
+        assert len(matching) == 1
 
 
 # ============================================================================
@@ -882,7 +981,7 @@ class TestGetRules:
         assert rules[0].ResourceType == "AWS::EC2::*"
         assert rules[0].Tag == "Environment"
         mock_client.scan.assert_called_once_with(
-            TableName="tagging-compliance",
+            TableName=table_arn,
             FilterExpression="Enabled = :enabled_value",
             ExpressionAttributeValues={":enabled_value": {"BOOL": True}},
         )
@@ -908,13 +1007,11 @@ class TestRulesCaching:
 
     def setup_method(self):
         """Reset the cache before each test."""
-        handler._rules_cache["rules"] = None
-        handler._rules_cache["timestamp"] = None
+        handler._cache.clear()
 
     def teardown_method(self):
         """Clean up the cache after each test."""
-        handler._rules_cache["rules"] = None
-        handler._rules_cache["timestamp"] = None
+        handler._cache.clear()
 
     @patch("handler.table_client")
     def test_cache_miss_first_call(self, mock_client, sample_dynamodb_item):
@@ -922,13 +1019,13 @@ class TestRulesCaching:
         mock_client.scan.return_value = {"Items": [sample_dynamodb_item]}
 
         table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
-        rules = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        rules = handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
 
         # Verify rules were retrieved and cached
         assert len(rules) == 1
         assert rules[0].ResourceType == "AWS::EC2::*"
-        assert handler._rules_cache["rules"] is not None
-        assert handler._rules_cache["timestamp"] is not None
+        assert handler._cache.get("rules") is not None
+        assert handler._cache.get("rules_timestamp") is not None
         mock_client.scan.assert_called_once()
 
     @patch("handler.table_client")
@@ -946,7 +1043,7 @@ class TestRulesCaching:
         table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
 
         # First call - cache miss
-        rules1 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        rules1 = handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
         assert len(rules1) == 1
         assert mock_client.scan.call_count == 1
 
@@ -954,7 +1051,7 @@ class TestRulesCaching:
         mock_datetime.now.return_value.timestamp.return_value = mock_now + 100
 
         # Second call - cache hit
-        rules2 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        rules2 = handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
         assert len(rules2) == 1
         assert rules2 == rules1
         # Scan should still only be called once (cache hit)
@@ -975,7 +1072,7 @@ class TestRulesCaching:
         table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
 
         # First call - cache miss
-        rules1 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        rules1 = handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
         assert len(rules1) == 1
         assert mock_client.scan.call_count == 1
 
@@ -983,7 +1080,7 @@ class TestRulesCaching:
         mock_datetime.now.return_value.timestamp.return_value = mock_now + 301
 
         # Second call - cache expired, should fetch again
-        rules2 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        rules2 = handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
         assert len(rules2) == 1
         # Scan should be called twice (cache expired)
         assert mock_client.scan.call_count == 2
@@ -996,18 +1093,17 @@ class TestRulesCaching:
         table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
 
         # First call with cache disabled
-        rules1 = handler.get_rules(table_arn, enable_cache=False, cache_ttl_seconds=300)
+        rules1 = handler.get_rules(table_arn, enable_cache=False, ttl_seconds=300)
         assert len(rules1) == 1
         assert mock_client.scan.call_count == 1
 
         # Second call with cache disabled should still fetch
-        rules2 = handler.get_rules(table_arn, enable_cache=False, cache_ttl_seconds=300)
+        rules2 = handler.get_rules(table_arn, enable_cache=False, ttl_seconds=300)
         assert len(rules2) == 1
         assert mock_client.scan.call_count == 2
 
         # Cache should not be populated
-        assert handler._rules_cache["rules"] is None
-        assert handler._rules_cache["timestamp"] is None
+        assert handler._cache.get("rules") is None
 
     @patch("handler.table_client")
     @patch("handler.datetime")
@@ -1022,7 +1118,7 @@ class TestRulesCaching:
         table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
 
         # First call - cache miss
-        rules1 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        rules1 = handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
         assert len(rules1) == 1
         assert mock_client.scan.call_count == 1
 
@@ -1030,7 +1126,7 @@ class TestRulesCaching:
         mock_datetime.now.return_value.timestamp.return_value = mock_now + 300
 
         # Call at exact TTL boundary should expire and fetch again
-        rules2 = handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
+        rules2 = handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
         assert len(rules2) == 1
         # Scan should be called twice (cache expired at boundary)
         assert mock_client.scan.call_count == 2
@@ -1050,8 +1146,8 @@ class TestRulesCaching:
         table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
 
         # First call
-        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
-        first_timestamp = handler._rules_cache["timestamp"]
+        handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
+        first_timestamp = handler._cache.get("rules_timestamp")
         assert first_timestamp == mock_now
 
         # Advance time and expire cache
@@ -1059,8 +1155,8 @@ class TestRulesCaching:
         mock_datetime.now.return_value.timestamp.return_value = mock_now
 
         # Second call should update timestamp
-        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=300)
-        second_timestamp = handler._rules_cache["timestamp"]
+        handler.get_rules(table_arn, enable_cache=True, ttl_seconds=300)
+        second_timestamp = handler._cache.get("rules_timestamp")
         assert second_timestamp == mock_now
         assert second_timestamp > first_timestamp
 
@@ -1079,21 +1175,21 @@ class TestRulesCaching:
         table_arn = "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance"
 
         # First call with 60 second TTL
-        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=60)
+        handler.get_rules(table_arn, enable_cache=True, ttl_seconds=60)
         assert mock_client.scan.call_count == 1
 
         # Advance time by 30 seconds (within 60 second TTL)
         mock_datetime.now.return_value.timestamp.return_value = mock_now + 30
 
         # Second call with same TTL should hit cache
-        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=60)
+        handler.get_rules(table_arn, enable_cache=True, ttl_seconds=60)
         assert mock_client.scan.call_count == 1
 
         # Advance time by another 31 seconds (61 total, exceeds 60 second TTL)
         mock_datetime.now.return_value.timestamp.return_value = mock_now + 61
 
         # Third call should expire and fetch again
-        handler.get_rules(table_arn, enable_cache=True, cache_ttl_seconds=60)
+        handler.get_rules(table_arn, enable_cache=True, ttl_seconds=60)
         assert mock_client.scan.call_count == 2
 
 

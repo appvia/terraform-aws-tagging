@@ -4,14 +4,30 @@
 # to build your own root module that invokes this module
 #####################################################################################
 
+data "aws_organizations_organization" "current" {}
+
+locals {
+  ## The organization id which is used in the policy
+  organizations_id = data.aws_organizations_organization.current.id
+}
+
 ## Provision the compliance rules in the DynamoDB table
 module "compliance" {
   source = "../../"
+
+  enable_organizations = true
+  organizations_id     = local.organizations_id
 
   # Configuration for the DynamoDB table to store compliance rules.
   compliance = {
     table = {
       name = "tagging-compliance"
+    }
+  }
+
+  organizations = {
+    table = {
+      name = "organizational-accounts"
     }
   }
 
@@ -28,24 +44,8 @@ module "compliance" {
       RuleId       = "s3-tagging-rule"
       ResourceType = "AWS::S3::*"
       Tag          = "Environment"
-      AccountIds   = ["*"]
+      #AccountIds   = ["*"]
+      OrganizationalPaths = ["root/Sandbox"]
     }
-  ]
-}
-
-## Provision the AWS Config rule to evaluate compliance of AWS 
-## resources with the rules stored in the DynamoDB table
-module "config" {
-  source = "../../modules/config"
-
-  ## The name of the DynamoDB table to store tags for AWS resources. 
-  dynamodb_table_arn = module.compliance.dynamodb_table_arn
-  ## The name of the AWS Config rule to create
-  config_name = "tagging-compliance"
-  ## The resource types to evaluate for compliance
-  config_resource_types = ["AWS::S3::Bucket"]
-
-  depends_on = [
-    module.compliance,
   ]
 }

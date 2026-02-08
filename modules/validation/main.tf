@@ -6,15 +6,17 @@ data "aws_iam_policy_document" "permissions" {
     effect = "Allow"
     actions = [
       "dynamodb:Get*",
-      "dynamodb:Scan*",
+      "dynamodb:Query",
+      "dynamodb:Scan",
     ]
-    resources = [
-      var.dynamodb_table_arn
-    ]
+    resources = compact([
+      var.dynamodb_table_arn,
+      var.organizations_table_arn
+    ])
   }
 
   statement {
-    sid       = "AllowConfigCompliance"
+    sid       = "AllowConfigPutEvents"
     effect    = "Allow"
     actions   = ["config:Put*"]
     resources = ["*"]
@@ -24,7 +26,7 @@ data "aws_iam_policy_document" "permissions" {
 ## Lambda function that used to handle the aws config rule
 module "lambda_function" {
   source  = "terraform-aws-modules/lambda/aws"
-  version = "8.5.0"
+  version = "8.2.0"
 
   function_name                = var.lambda_name
   function_tags                = var.tags
@@ -41,10 +43,12 @@ module "lambda_function" {
   ## Environment variables for the Lambda function
   environment_variables = {
     ACCOUNT_ID              = local.account_id
+    ENABLE_ORGANIZATIONS    = var.organizations_table_arn != null ? "true" : "false"
     LOG_LEVEL               = var.lambda_log_level
     RULES_CACHE_ENABLED     = var.rules_cache_enabled ? "true" : "false"
     RULES_CACHE_TTL_SECONDS = tostring(var.rules_cache_ttl_seconds)
     TABLE_ARN               = var.dynamodb_table_arn
+    TABLE_ARN_ORGANIZATIONS = var.organizations_table_arn != null ? var.organizations_table_arn : ""
   }
 
   ## Lambda Role
@@ -78,17 +82,17 @@ resource "aws_lambda_permission" "allow_config" {
   statement_id  = "AllowExecutionFromConfig"
   # For same-account deployment, no source_account restriction needed
   # For cross-account deployment, specify source accounts or organization
-  source_account = var.organization_id != null ? null : local.account_id
+  source_account = var.organizations_id != null ? null : local.account_id
 }
 
 ## Allow cross-account invocation from organization accounts
 resource "aws_lambda_permission" "allow_organization" {
-  count = var.organization_id != null ? 1 : 0
+  count = var.organizations_id != null ? 1 : 0
 
   action           = "lambda:InvokeFunction"
   function_name    = module.lambda_function.lambda_function_name
   principal        = "config.amazonaws.com"
-  principal_org_id = var.organization_id
+  principal_org_id = var.organizations_id
   statement_id     = "AllowExecutionFromOrganization"
 }
 
