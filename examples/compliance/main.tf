@@ -12,8 +12,8 @@ module "compliance" {
   ## List of compliance rules to be stored in the DynamoDB table.
   rules = [
     {
-      RuleId       = "ec2-environment-tag-compliance",
-      ResourceType = "AWS::EC2::*"
+      RuleId        = "ec2-environment-tag-compliance",
+      ResourceTypes = ["AWS::EC2::*"]
       Tag : "Environment",
       Enabled : true,
       Required : true,
@@ -21,8 +21,8 @@ module "compliance" {
       AccountIds : ["*"]
     },
     {
-      RuleId = "s3-data-classification-tag-compliance",
-      ResourceType : "AWS::S3::*",
+      RuleId        = "s3-data-classification-tag-compliance",
+      ResourceTypes = ["AWS::S3::*"],
       Tag : "DataClassification",
       Enabled : true,
       Required : true,

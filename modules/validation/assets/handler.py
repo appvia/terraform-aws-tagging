@@ -168,7 +168,7 @@ class Rule:
     # Whether the rule requires the tag to be present (True) or just checks if the tag value is valid if the tag is present (False).
     Required: bool = True
     # The AWS resource type that the rule applies to (e.g. "AWS::EC2::Instance").
-    ResourceType: str = ""
+    ResourceTypes: List[str] = field(default_factory=list)
     # An identifier for the rule, used for logging and debugging purposes.
     RuleId: str = ""
     # The key of the tag that the rule checks for (e.g. "Environment").
@@ -189,7 +189,7 @@ class Rule:
                 raw.get("OrganizationalPaths", {}).get("S", "[]")
             ),
             Required=raw.get("Required", {}).get("B", True),
-            ResourceType=raw.get("ResourceType", {}).get("S", ""),
+            ResourceTypes=json.loads(raw.get("ResourceTypes", {}).get("S", "[]")),
             RuleId=raw.get("RuleId", {}).get("S", ""),
             Tag=raw.get("Tag", {}).get("S", ""),
             ValuePattern=raw.get("ValuePattern", {}).get("S", ""),
@@ -208,10 +208,21 @@ class Rule:
         """Check if the rule has organizational paths defined."""
         return bool(self.OrganizationalPaths) and len(self.OrganizationalPaths) > 0
 
-    def is_inside_organizational_path(self, path: str) -> bool:
+    def match_organizational_path(self, path: str) -> bool:
         """Check if the resource's account is within any of the organizational paths"""
         return "*" in self.OrganizationalPaths or any(
             path.startswith(org_path) for org_path in self.OrganizationalPaths
+        )
+
+    def match_resource_type(self, resource_type: str) -> bool:
+        """Check if the rule applies to the given resource type, supporting wildcards."""
+        return (
+            "*" in self.ResourceTypes
+            or resource_type in self.ResourceTypes
+            or any(
+                rt.endswith("*") and resource_type.startswith(rt[:-1])
+                for rt in self.ResourceTypes
+            )
         )
 
 
@@ -605,7 +616,7 @@ def find_matching_rules(
             "rule.account_ids": rule.AccountIds,
             "rule.enabled": rule.Enabled,
             "rule.organizational_paths": rule.OrganizationalPaths,
-            "rule.resource_type": rule.ResourceType,
+            "rule.resource_types": rule.ResourceTypes,
             "rule.ruleId": rule.RuleId,
         }
         if account is not None:
@@ -639,18 +650,13 @@ def find_matching_rules(
         if (
             account is not None
             and rule.has_organizational_paths()
-            and not rule.is_inside_organizational_path(account.OUPath)
+            and not rule.match_organizational_path(account.OUPath)
         ):
             continue
 
         # Next we check if the rule matches the resource type or wildcard, if not we skip it.
         # Support wildcard matching: "AWS::EC2::*" matches "AWS::EC2::Instance"
-        if not (
-            rule.ResourceType == "*"
-            or resource.ResourceType == rule.ResourceType
-            or rule.ResourceType.endswith("*")
-            and resource.ResourceType.startswith(rule.ResourceType[:-1])
-        ):
+        if not rule.match_resource_type(resource.ResourceType):
             continue
 
         logger.debug(

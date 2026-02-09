@@ -13,14 +13,14 @@ run "basic" {
     dynamodb_table_name = "tagging-compliance"
     rules = [
       {
-        RuleId       = "ec2-tagging-rule"
-        Enabled      = true
-        Required     = true
-        ResourceType = "AWS::EC2::*"
-        Tag          = "Environment"
-        ValuePattern = ""
-        Values       = ["Development"]
-        AccountIds   = ["*"]
+        RuleId        = "ec2-tagging-rule"
+        Enabled       = true
+        Required      = true
+        ResourceTypes = ["AWS::EC2::*"]
+        Tag           = "Environment"
+        ValuePattern  = ""
+        Values        = ["Development"]
+        AccountIds    = ["*"]
       }
     ]
   }

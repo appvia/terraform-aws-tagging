@@ -12,8 +12,8 @@ resource "aws_dynamodb_table_item" "tagging" {
     RuleId = {
       S = each.value.RuleId
     }
-    ResourceType = {
-      S = each.value.ResourceType
+    ResourceTypes = {
+      S = jsonencode(each.value.ResourceTypes)
     }
     Tag = {
       S = each.value.Tag

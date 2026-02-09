@@ -2,8 +2,7 @@
 resource "aws_dynamodb_table" "compliance" {
   name           = var.compliance.table.name
   billing_mode   = var.compliance.table.billing_mode
-  hash_key       = "ResourceType"
-  range_key      = "RuleId"
+  hash_key       = "RuleId"
   read_capacity  = var.compliance.table.read_capacity
   tags           = var.tags
   write_capacity = var.compliance.table.write_capacity
@@ -19,11 +18,6 @@ resource "aws_dynamodb_table" "compliance" {
 
   point_in_time_recovery {
     enabled = var.compliance.table.point_in_time_recovery_enabled
-  }
-
-  attribute {
-    name = "ResourceType"
-    type = "S"
   }
 
   attribute {

@@ -18,17 +18,17 @@ module "compliance" {
   ## Collection of compliance rules to be stored in the DynamoDB table.
   rules = [
     {
-      RuleId       = "ec2-tagging-rule"
-      ResourceType = "AWS::EC2::*"
-      Tag          = "Environment"
-      Values       = ["Development"]
-      AccountIds   = ["*"]
+      RuleId        = "ec2-tagging-rule"
+      ResourceTypes = ["AWS::EC2::*"]
+      Tag           = "Environment"
+      Values        = ["Development"]
+      AccountIds    = ["*"]
     },
     {
-      RuleId       = "s3-tagging-rule"
-      ResourceType = "AWS::S3::*"
-      Tag          = "Environment"
-      AccountIds   = ["*"]
+      RuleId        = "s3-tagging-rule"
+      ResourceTypes = ["AWS::S3::*"]
+      Tag           = "Environment"
+      AccountIds    = ["*"]
     }
   ]
 }

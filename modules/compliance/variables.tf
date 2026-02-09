@@ -11,7 +11,7 @@ variable "rules" {
     Enabled             = optional(bool, true)
     OrganizationalPaths = optional(list(string), [])
     Required            = optional(bool, true)
-    ResourceType        = string
+    ResourceTypes       = list(string)
     RuleId              = string
     Tag                 = string
     ValuePattern        = optional(string, "")

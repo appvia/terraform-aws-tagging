@@ -83,7 +83,7 @@ resource "aws_dynamodb_table" "tagging_rules" {
   }
 
   attribute {
-    name = "ResourceType"
+    name = "ResourceTypes"
     type = "S"
   }
 
@@ -105,22 +105,22 @@ module "tagging_compliance_rules" {
 
   rules = [
     {
-      RuleId       = "require-environment-tag"
-      ResourceType = "AWS::EC2::Instance"
-      Tag          = "Environment"
-      Required     = true
-      Values       = ["production", "staging", "development"]
-      AccountIds   = ["*"]
-      Enabled      = true
+      RuleId        = "require-environment-tag"
+      ResourceTypes = ["AWS::EC2::Instance"]
+      Tag           = "Environment"
+      Required      = true
+      Values        = ["production", "staging", "development"]
+      AccountIds    = ["*"]
+      Enabled       = true
     },
     {
-      RuleId       = "optional-cost-center"
-      ResourceType = "AWS::RDS::DBInstance"
-      Tag          = "CostCenter"
-      Required     = false
-      Values       = ["CC-001", "CC-002", "CC-003"]
-      AccountIds   = ["123456789012"]
-      Enabled      = true
+      RuleId        = "optional-cost-center"
+      ResourceTypes = ["AWS::RDS::DBInstance"]
+      Tag           = "CostCenter"
+      Required      = false
+      Values        = ["CC-001", "CC-002", "CC-003"]
+      AccountIds    = ["123456789012"]
+      Enabled       = true
     }
   ]
 }
@@ -502,7 +502,7 @@ Rules stored by this module are evaluated by the AWS Config Lambda function as f
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_dynamodb_table_name"></a> [dynamodb\_table\_name](#input\_dynamodb\_table\_name) | The name of the DynamoDB table to store tags for AWS resources. | `string` | n/a | yes |
-| <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds          = optional(list(string), ["*"])<br/>    Enabled             = optional(bool, true)<br/>    OrganizationalPaths = optional(list(string), [])<br/>    Required            = optional(bool, true)<br/>    ResourceType        = string<br/>    RuleId              = string<br/>    Tag                 = string<br/>    ValuePattern        = optional(string, "")<br/>    Values              = optional(list(string), [])<br/>  }))</pre> | n/a | yes |
+| <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds          = optional(list(string), ["*"])<br/>    Enabled             = optional(bool, true)<br/>    OrganizationalPaths = optional(list(string), [])<br/>    Required            = optional(bool, true)<br/>    ResourceTypes       = list(string)<br/>    RuleId              = string<br/>    Tag                 = string<br/>    ValuePattern        = optional(string, "")<br/>    Values              = optional(list(string), [])<br/>  }))</pre> | n/a | yes |
 
 ## Outputs
 

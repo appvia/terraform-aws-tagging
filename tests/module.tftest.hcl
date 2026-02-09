@@ -60,13 +60,13 @@ run "with_rules" {
     }
     rules = [
       {
-        RuleId       = "ec2-tagging-rule"
-        Enabled      = true
-        Required     = true
-        ResourceType = "AWS::EC2::*"
-        Tag          = "Environment"
-        Values       = ["Development"]
-        AccountIds   = ["*"]
+        RuleId        = "ec2-tagging-rule"
+        Enabled       = true
+        Required      = true
+        ResourceTypes = ["AWS::EC2::*"]
+        Tag           = "Environment"
+        Values        = ["Development"]
+        AccountIds    = ["*"]
       }
     ]
   }

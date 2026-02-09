@@ -44,7 +44,7 @@ def sample_rule_required():
         AccountIds=["*"],
         Enabled=True,
         Required=True,
-        ResourceType="AWS::EC2::*",
+        ResourceTypes=["AWS::EC2::*"],
         Tag="Environment",
         ValuePattern="",
         Values=["Production", "Staging", "Development"],
@@ -58,7 +58,7 @@ def sample_rule_optional():
         AccountIds=["123456789012"],
         Enabled=True,
         Required=False,
-        ResourceType="AWS::EC2::Instance",
+        ResourceTypes=["AWS::EC2::Instance"],
         Tag="DataClassification",
         RuleId="optional-data-classification",
         ValuePattern="",
@@ -73,7 +73,7 @@ def sample_rule_pattern():
         AccountIds=["*"],
         Enabled=True,
         Required=True,
-        ResourceType="AWS::EC2::*",
+        ResourceTypes=["AWS::EC2::*"],
         RuleId="ec2-owner-email",
         Tag="Owner",
         ValuePattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
@@ -123,10 +123,10 @@ def sample_config_event():
 def sample_dynamodb_item():
     """A sample DynamoDB item representing a tagging rule."""
     return {
-        "ResourceType": {"S": "AWS::EC2::*"},
+        "ResourceTypes": {"S": '["AWS::EC2::*"]'},
         "Tag": {"S": "Environment"},
-        "Enabled": {"B": True},
-        "Required": {"B": True},
+        "Enabled": {"BOOL": True},
+        "Required": {"BOOL": True},
         "RuleId": {"S": "optional-data-classification"},
         "ValuePattern": {"S": ""},
         "Values": {"S": '["Production", "Staging", "Development"]'},
@@ -320,7 +320,7 @@ class TestEvaluations:
         rule = handler.Rule(
             RuleId="test-rule",
             Tag="Environment",
-            ResourceType="AWS::EC2::*",
+            ResourceTypes=["AWS::EC2::*"],
         )
         evaluations.add_non_compliant(
             annotation="Tag value not permitted",
@@ -342,7 +342,7 @@ class TestEvaluations:
         evaluations = handler.Evaluations(Evaluations=[])
         evaluations.add_non_compliant(
             annotation="Missing required tag",
-            rule=handler.Rule(Tag="Environment", ResourceType="AWS::EC2::*"),
+            rule=handler.Rule(Tag="Environment", ResourceTypes=["AWS::EC2::*"]),
         )
         reasons = evaluations.get_non_compliance_reasons()
         assert len(reasons) == 1
@@ -353,11 +353,11 @@ class TestEvaluations:
         evaluations = handler.Evaluations(Evaluations=[])
         evaluations.add_non_compliant(
             annotation="Missing required tag",
-            rule=handler.Rule(Tag="Environment", ResourceType="AWS::EC2::*"),
+            rule=handler.Rule(Tag="Environment", ResourceTypes=["AWS::EC2::*"]),
         )
         evaluations.add_non_compliant(
             annotation="Invalid tag value",
-            rule=handler.Rule(Tag="Owner", ResourceType="AWS::EC2::*"),
+            rule=handler.Rule(Tag="Owner", ResourceTypes=["AWS::EC2::*"]),
         )
         reasons = evaluations.get_non_compliance_reasons()
         assert len(reasons) == 2
@@ -369,11 +369,11 @@ class TestEvaluations:
         evaluations = handler.Evaluations(Evaluations=[])
         evaluations.add_compliant(
             annotation="Tag present and valid",
-            rule=handler.Rule(Tag="Environment", ResourceType="AWS::EC2::*"),
+            rule=handler.Rule(Tag="Environment", ResourceTypes=["AWS::EC2::*"]),
         )
         evaluations.add_non_compliant(
             annotation="Missing required tag",
-            rule=handler.Rule(Tag="Owner", ResourceType="AWS::EC2::*"),
+            rule=handler.Rule(Tag="Owner", ResourceTypes=["AWS::EC2::*"]),
         )
         evaluations.add_not_applicable(annotation="Resource not applicable")
         reasons = evaluations.get_non_compliance_reasons()
@@ -416,7 +416,7 @@ class TestAnnotationAggregation:
         """Test annotation with single non-compliance reason."""
         # Rule requires specific values which resource doesn't have
         rule_item = {
-            "ResourceType": {"S": "AWS::EC2::*"},
+            "ResourceTypes": {"S": '["AWS::EC2::*"]'},
             "Tag": {"S": "Environment"},
             "Enabled": {"BOOL": True},
             "Required": {"BOOL": True},
@@ -451,7 +451,7 @@ class TestAnnotationAggregation:
         # Two rules, both will fail
         rule_items = [
             {
-                "ResourceType": {"S": "AWS::EC2::*"},
+                "ResourceTypes": {"S": '["AWS::EC2::*"]'},
                 "Tag": {"S": "Environment"},
                 "Enabled": {"BOOL": True},
                 "Required": {"BOOL": True},
@@ -460,7 +460,7 @@ class TestAnnotationAggregation:
                 "AccountIds": {"S": '["*"]'},
             },
             {
-                "ResourceType": {"S": "AWS::EC2::Instance"},
+                "ResourceTypes": {"S": '["AWS::EC2::Instance"]'},
                 "Tag": {"S": "Owner"},
                 "Enabled": {"BOOL": True},
                 "Required": {"BOOL": True},
@@ -496,7 +496,7 @@ class TestAnnotationAggregation:
         # Create multiple rules that will generate long reasons
         rule_items = [
             {
-                "ResourceType": {"S": "AWS::EC2::*"},
+                "ResourceTypes": {"S": '["AWS::EC2::*"]'},
                 "Tag": {"S": f"Tag{i}"},
                 "Enabled": {"BOOL": True},
                 "Required": {"BOOL": True},
@@ -533,7 +533,7 @@ class TestAnnotationAggregation:
     ):
         """Test annotation is not truncated if under 256 characters."""
         rule_item = {
-            "ResourceType": {"S": "AWS::EC2::*"},
+            "ResourceTypes": {"S": '["AWS::EC2::*"]'},
             "Tag": {"S": "Environment"},
             "Enabled": {"BOOL": True},
             "Required": {"BOOL": True},
@@ -568,7 +568,7 @@ class TestAnnotationAggregation:
         """Test that multiple reasons are joined with semicolons."""
         rule_items = [
             {
-                "ResourceType": {"S": "AWS::EC2::*"},
+                "ResourceTypes": {"S": '["AWS::EC2::*"]'},
                 "Tag": {"S": "Environment"},
                 "Enabled": {"BOOL": True},
                 "Required": {"BOOL": True},
@@ -577,7 +577,7 @@ class TestAnnotationAggregation:
                 "AccountIds": {"S": '["*"]'},
             },
             {
-                "ResourceType": {"S": "AWS::EC2::Instance"},
+                "ResourceTypes": {"S": '["AWS::EC2::Instance"]'},
                 "Tag": {"S": "Owner"},
                 "Enabled": {"BOOL": True},
                 "Required": {"BOOL": True},
@@ -654,7 +654,7 @@ class TestParseRule:
         assert rule.AccountIds == ["*"]
         assert rule.Enabled is True
         assert rule.Required is True
-        assert rule.ResourceType == "AWS::EC2::*"
+        assert rule.ResourceTypes == ["AWS::EC2::*"]
         assert rule.Tag == "Environment"
         assert rule.RuleId == "optional-data-classification"
         assert rule.ValuePattern == ""
@@ -663,13 +663,14 @@ class TestParseRule:
     def test_parse_rule_with_defaults(self):
         """Test parsing a rule with missing optional fields uses defaults."""
         item = {
-            "ResourceType": {"S": "AWS::S3::Bucket"},
+            "ResourceTypes": {"S": '["AWS::S3::Bucket"]'},
             "Tag": {"S": "DataClassification"},
         }
         rule = handler.Rule.parse(item)
         assert rule.AccountIds == ["*"]
         assert rule.Enabled is True
         assert rule.Required is True
+        assert rule.ResourceTypes == ["AWS::S3::Bucket"]
         assert rule.RuleId == ""
         assert rule.ValuePattern == ""
         assert rule.Values == []
@@ -698,7 +699,7 @@ class TestFindMatchingRules:
             AccountIds=["*"],
             Enabled=True,
             Required=True,
-            ResourceType="*",
+            ResourceTypes=["*"],
             Tag="Owner",
             ValuePattern="",
             Values=[],
@@ -720,7 +721,7 @@ class TestFindMatchingRules:
             AccountIds=["999999999999"],
             Enabled=True,
             Required=True,
-            ResourceType="AWS::EC2::Instance",
+            ResourceTypes=["AWS::EC2::Instance"],
             Tag="Environment",
             ValuePattern="",
             Values=[],
@@ -734,7 +735,7 @@ class TestFindMatchingRules:
             AccountIds=["*"],
             Enabled=True,
             Required=True,
-            ResourceType="AWS::S3::Bucket",
+            ResourceTypes=["AWS::S3::Bucket"],
             Tag="Environment",
             ValuePattern="",
             Values=[],
@@ -749,7 +750,7 @@ class TestFindMatchingRules:
                 AccountIds=["*"],
                 Enabled=True,
                 Required=True,
-                ResourceType="AWS::EC2::*",
+                ResourceTypes=["AWS::EC2::*"],
                 Tag="Environment",
                 ValuePattern="",
                 Values=["Production"],
@@ -758,7 +759,7 @@ class TestFindMatchingRules:
                 AccountIds=["*"],
                 Enabled=True,
                 Required=True,
-                ResourceType="AWS::EC2::Instance",
+                ResourceTypes=["AWS::EC2::Instance"],
                 Tag="CostCenter",
                 ValuePattern="",
                 Values=[],
@@ -775,7 +776,7 @@ class TestFindMatchingRules:
             AccountIds=["*"],
             Enabled=True,
             Required=True,
-            ResourceType="AWS::EC2::*",
+            ResourceTypes=["AWS::EC2::*"],
             Tag="Environment",
             ValuePattern="",
             Values=[],
@@ -799,7 +800,7 @@ class TestFindMatchingRules:
             AccountIds=["*"],
             Enabled=True,
             Required=True,
-            ResourceType="AWS::EC2::*",
+            ResourceTypes=["AWS::EC2::*"],
             Tag="Environment",
             ValuePattern="",
             Values=[],
@@ -822,7 +823,7 @@ class TestFindMatchingRules:
             AccountIds=["*"],
             Enabled=True,
             Required=True,
-            ResourceType="AWS::EC2::*",
+            ResourceTypes=["AWS::EC2::*"],
             Tag="Environment",
             ValuePattern="",
             Values=[],
@@ -837,6 +838,85 @@ class TestFindMatchingRules:
         )
         matching = handler.find_matching_rules([rule], sample_resource, account)
         assert len(matching) == 1
+
+    def test_find_matching_rules_multiple_resource_types(self, sample_resource):
+        """Test rule with multiple resource types matches appropriate resources."""
+        # Create a rule that applies to multiple EC2 resource types
+        rule = handler.Rule(
+            AccountIds=["*"],
+            Enabled=True,
+            Required=True,
+            ResourceTypes=[
+                "AWS::EC2::Instance",
+                "AWS::EC2::Volume",
+                "AWS::EC2::SecurityGroup",
+            ],
+            Tag="Environment",
+            ValuePattern="",
+            Values=["Production"],
+        )
+        # Resource is an EC2 Instance, should match
+        matching = handler.find_matching_rules([rule], sample_resource)
+        assert len(matching) == 1
+        assert matching[0].Tag == "Environment"
+
+        # Test with a Volume resource - should also match
+        volume_resource = handler.Resource(
+            AccountId="123456789012",
+            ResourceType="AWS::EC2::Volume",
+            ResourceId="vol-12345",
+            Tags={"Environment": "Production"},
+        )
+        matching_volume = handler.find_matching_rules([rule], volume_resource)
+        assert len(matching_volume) == 1
+
+        # Test with S3 bucket - should NOT match
+        s3_resource = handler.Resource(
+            AccountId="123456789012",
+            ResourceType="AWS::S3::Bucket",
+            ResourceId="my-bucket",
+            Tags={"Environment": "Production"},
+        )
+        matching_s3 = handler.find_matching_rules([rule], s3_resource)
+        assert len(matching_s3) == 0
+
+    def test_find_matching_rules_multiple_resource_types_with_wildcard(
+        self, sample_resource
+    ):
+        """Test rule with multiple resource types including wildcard."""
+        # Create a rule with both specific types and wildcard
+        rule = handler.Rule(
+            AccountIds=["*"],
+            Enabled=True,
+            Required=True,
+            ResourceTypes=["AWS::EC2::*", "AWS::S3::Bucket", "AWS::RDS::DBInstance"],
+            Tag="Owner",
+            ValuePattern="",
+            Values=[],
+        )
+        # EC2 Instance should match via wildcard
+        matching = handler.find_matching_rules([rule], sample_resource)
+        assert len(matching) == 1
+
+        # S3 Bucket should match via specific type
+        s3_resource = handler.Resource(
+            AccountId="123456789012",
+            ResourceType="AWS::S3::Bucket",
+            ResourceId="my-bucket",
+            Tags={},
+        )
+        matching_s3 = handler.find_matching_rules([rule], s3_resource)
+        assert len(matching_s3) == 1
+
+        # Lambda should NOT match
+        lambda_resource = handler.Resource(
+            AccountId="123456789012",
+            ResourceType="AWS::Lambda::Function",
+            ResourceId="my-function",
+            Tags={},
+        )
+        matching_lambda = handler.find_matching_rules([rule], lambda_resource)
+        assert len(matching_lambda) == 0
 
 
 # ============================================================================
@@ -861,7 +941,7 @@ class TestValidateCompliance:
             AccountIds=["*"],
             Enabled=True,
             Required=True,
-            ResourceType="AWS::EC2::*",
+            ResourceTypes=["AWS::EC2::*"],
             Tag="MissingTag",
             ValuePattern="",
             Values=[],
@@ -898,7 +978,7 @@ class TestValidateCompliance:
             AccountIds=["*"],
             Enabled=True,
             Required=True,
-            ResourceType="AWS::EC2::*",
+            ResourceTypes=["AWS::EC2::*"],
             Tag="CostCenter",
             ValuePattern=r"^\d{6}$",  # Requires exactly 6 digits
             Values=[],
@@ -978,7 +1058,7 @@ class TestGetRules:
         rules = handler.get_rules(table_arn)
 
         assert len(rules) == 1
-        assert rules[0].ResourceType == "AWS::EC2::*"
+        assert rules[0].ResourceTypes == ["AWS::EC2::*"]
         assert rules[0].Tag == "Environment"
         mock_client.scan.assert_called_once_with(
             TableName=table_arn,
@@ -1023,7 +1103,7 @@ class TestRulesCaching:
 
         # Verify rules were retrieved and cached
         assert len(rules) == 1
-        assert rules[0].ResourceType == "AWS::EC2::*"
+        assert rules[0].ResourceTypes == ["AWS::EC2::*"]
         assert handler._cache.get("rules") is not None
         assert handler._cache.get("rules_timestamp") is not None
         mock_client.scan.assert_called_once()
@@ -1246,7 +1326,7 @@ class TestLambdaHandler:
         """Test lambda handler with a non-compliant resource."""
         # Rule requires "Development" value which the resource doesn't have
         rule_item = {
-            "ResourceType": {"S": "AWS::EC2::*"},
+            "ResourceTypes": {"S": '["AWS::EC2::*"]'},
             "Tag": {"S": "Environment"},
             "Enabled": {"B": True},
             "Required": {"B": True},
@@ -1310,7 +1390,7 @@ class TestLambdaHandler:
         """Test lambda handler when no rules match the resource."""
         # Rule for S3, but resource is EC2
         rule_item = {
-            "ResourceType": {"S": "AWS::S3::Bucket"},
+            "ResourceTypes": {"S": '["AWS::S3::Bucket"]'},
             "Tag": {"S": "DataClassification"},
             "Enabled": {"B": True},
             "Required": {"B": True},

@@ -48,8 +48,6 @@ variable "organizations" {
       ## The name of the Lambda function to handle AWS Organization account movements.
       name = optional(string, "organization-compliance")
       ## The runtime environment for the Lambda function.
-      role_name = optional(string, "organization-compliance")
-      ## The runtime environment for the Lambda function.
       runtime = optional(string, "python3.12")
       ## The timeout for the Lambda function in seconds.
       timeout = optional(number, 30)
@@ -76,7 +74,7 @@ variable "rules" {
     AccountIds          = optional(list(string), [])
     Enabled             = optional(bool, true)
     Required            = optional(bool, true)
-    ResourceType        = string
+    ResourceTypes       = list(string)
     RuleId              = string
     Tag                 = string
     ValuePattern        = optional(string, null)
