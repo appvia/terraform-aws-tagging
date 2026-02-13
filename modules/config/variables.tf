@@ -93,8 +93,8 @@ variable "rules_cache_ttl_seconds" {
   default     = 300
 
   validation {
-    condition     = var.rules_cache_ttl_seconds >= 0 && var.rules_cache_ttl_seconds <= 3600
-    error_message = "Cache TTL must be between 0 and 3600 seconds (1 hour)."
+    condition     = var.rules_cache_ttl_seconds >= 0
+    error_message = "Cache TTL must be between 0"
   }
 }
 
