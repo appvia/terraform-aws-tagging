@@ -91,11 +91,6 @@ variable "rules_cache_ttl_seconds" {
   description = "Time-to-live (TTL) in seconds for cached compliance rules. After this period, the cache expires and rules are re-fetched from DynamoDB. Default is 300 seconds (5 minutes)."
   type        = number
   default     = 300
-
-  validation {
-    condition     = var.rules_cache_ttl_seconds >= 0 && var.rules_cache_ttl_seconds <= 3600
-    error_message = "Cache TTL must be between 0 and 3600 seconds (1 hour)."
-  }
 }
 
 variable "tags" {
