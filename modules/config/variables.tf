@@ -54,13 +54,13 @@ variable "lambda_memory_size" {
 variable "lambda_name" {
   description = "The name of the Lambda function to handle AWS Organization account movements."
   type        = string
-  default     = "tagging-compliance"
+  default     = "lz-tagging-compliance"
 }
 
 variable "lambda_role_name" {
   description = "The name of the IAM role to be created for the Lambda function."
   type        = string
-  default     = "tagging-compliance"
+  default     = "lz-tagging-compliance"
 }
 
 variable "lambda_runtime" {
