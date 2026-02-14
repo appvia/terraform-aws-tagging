@@ -33,6 +33,12 @@ variable "config_resource_types" {
   default     = ["*"]
 }
 
+variable "lambda_create_role" {
+  description = "Indicates we should create the role"
+  type        = bool
+  default     = true
+}
+
 variable "lambda_description" {
   description = "The description of the Lambda function to handle AWS Organization account movements."
   type        = string

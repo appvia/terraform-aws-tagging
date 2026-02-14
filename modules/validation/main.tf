@@ -52,7 +52,7 @@ module "lambda_function" {
   }
 
   ## Lambda Role
-  create_role                   = true
+  create_role                   = var.lambda_create_role
   role_name                     = var.lambda_role_name
   role_tags                     = var.tags
   role_force_detach_policies    = true
@@ -67,7 +67,7 @@ module "lambda_function" {
   attach_tracing_policy         = true
   policy_json                   = data.aws_iam_policy_document.permissions.json
 
-  ## Cloudwatch Logs 
+  ## Cloudwatch Logs
   cloudwatch_logs_tags              = var.tags
   cloudwatch_logs_kms_key_id        = var.cloudwatch_logs_kms_key_id
   cloudwatch_logs_retention_in_days = var.cloudwatch_logs_retention_in_days
@@ -106,3 +106,4 @@ resource "aws_lambda_permission" "allow_specific_accounts" {
   statement_id   = "AllowExecutionFromAccount${each.key}"
   source_account = each.key
 }
+

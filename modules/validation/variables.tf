@@ -27,6 +27,12 @@ variable "dynamodb_table_arn" {
   type        = string
 }
 
+variable "lambda_create_role" {
+  description = "Indicates we should create the role"
+  type        = bool
+  default     = true
+}
+
 variable "lambda_description" {
   description = "The description of the Lambda function to handle AWS Organization account movements."
   type        = string
@@ -70,25 +76,25 @@ variable "lambda_timeout" {
 }
 
 variable "organizations_id" {
-  description = "AWS Organization ID to allow cross-account invocation. If provided, allows any account in the organization to invoke the Lambda function."
+  description = "AWS Organization ID to allow cross-account invocation."
   type        = string
   default     = null
 }
 
 variable "organizations_table_arn" {
-  description = "The ARN of the DynamoDB table to store AWS Organizations account information. If provided, the Lambda function will use this table to evaluate compliance of AWS resources against organizational rules."
+  description = "The ARN of the DynamoDB table to store AWS Organizations account information. "
   type        = string
   default     = null
 }
 
 variable "rules_cache_enabled" {
-  description = "Enable or disable caching of compliance rules in Lambda function memory. When enabled, rules are cached between invocations to reduce DynamoDB read costs and improve performance."
+  description = "Enable or disable caching of compliance rules in Lambda function memory."
   type        = bool
   default     = true
 }
 
 variable "rules_cache_ttl_seconds" {
-  description = "Time-to-live (TTL) in seconds for cached compliance rules. After this period, the cache expires and rules are re-fetched from DynamoDB. Default is 300 seconds (5 minutes)."
+  description = "Time-to-live (TTL) in seconds for cached compliance rules."
   type        = number
   default     = 300
 }
