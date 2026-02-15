@@ -30,7 +30,12 @@ variable "config_name" {
 variable "config_resource_types" {
   description = "List of AWS resource types to evaluate (https://docs.aws.amazon.com/config/latest/developerguide/resource-config-reference.html)"
   type        = list(string)
-  default     = ["*"]
+}
+
+variable "lambda_architectures" {
+  description = "The lambda architecture to use. Valid values are x86_64 and arm64."
+  type        = list(string)
+  default     = ["arm64", "x86_64"]
 }
 
 variable "lambda_create_role" {

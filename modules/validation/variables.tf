@@ -27,6 +27,12 @@ variable "dynamodb_table_arn" {
   type        = string
 }
 
+variable "lambda_architectures" {
+  description = "The lambda architecture to use. Valid values are x86_64 and arm64."
+  type        = list(string)
+  default     = ["arm64", "x86_64"]
+}
+
 variable "lambda_create_role" {
   description = "Indicates we should create the role"
   type        = bool
