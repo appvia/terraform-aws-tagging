@@ -405,7 +405,7 @@ class TestAnnotationAggregation:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")
@@ -439,7 +439,7 @@ class TestAnnotationAggregation:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")
@@ -484,7 +484,7 @@ class TestAnnotationAggregation:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")
@@ -523,7 +523,7 @@ class TestAnnotationAggregation:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")
@@ -557,7 +557,7 @@ class TestAnnotationAggregation:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")
@@ -1026,7 +1026,7 @@ class TestValidateEnvironment:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging",
         },
     )
     def test_validate_environment_valid(self):
@@ -1285,7 +1285,7 @@ class TestLambdaHandler:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")
@@ -1315,7 +1315,7 @@ class TestLambdaHandler:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")
@@ -1348,7 +1348,7 @@ class TestLambdaHandler:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")
@@ -1379,7 +1379,7 @@ class TestLambdaHandler:
         os.environ,
         {
             "ACCOUNT_ID": "123456789012",
-            "TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
         },
     )
     @patch("handler.config_client")

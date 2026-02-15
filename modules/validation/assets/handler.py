@@ -814,7 +814,7 @@ def validate_environment() -> None:
         ValueError: If any required environment variables are missing.
     """
 
-    for var_name in ["ACCOUNT_ID", "TABLE_ARN"]:
+    for var_name in ["ACCOUNT_ID", "TABLE_ARN_RULES"]:
         if not os.environ.get(var_name):
             logger.error(
                 "Missing required environment variable",
@@ -846,7 +846,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
     # Get the account id from the environment variable (set by Terraform) or from the event
     account_id = event.get("accountId") or os.environ.get("ACCOUNT_ID")
     # Get the table ARN from the environment variable (set by Terraform)
-    table_arn = event.get("table_arn") or os.environ.get("TABLE_ARN")
+    table_arn = event.get("table_arn") or os.environ.get("TABLE_ARN_RULES")
     # Get the account metadata, which includes organizational unit paths, from the DynamoDB table.
     accounts_table_arn = event.get("accounts_table_arn") or os.environ.get(
         "TABLE_ARN_ORGANIZATIONS", None

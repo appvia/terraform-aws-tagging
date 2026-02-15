@@ -1,5 +1,5 @@
 locals {
-  ## Indicates if organizations handler is enables 
+  ## Indicates if organizations handler is enables
   enable_organizations = var.organizations != null
 }
 
@@ -88,7 +88,7 @@ resource "aws_dynamodb_resource_policy" "organizations_access" {
   policy       = data.aws_iam_policy_document.organizations_access.json
 }
 
-## Provision the handler used to trigger the lambda function on organization 
+## Provision the handler used to trigger the lambda function on organization
 ## account movements and store the organization metadata in the DynamoDB table
 module "organizations_handler" {
   count  = local.enable_organizations ? 1 : 0

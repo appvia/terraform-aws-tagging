@@ -761,8 +761,8 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 
 | Name | Description |
 |------|-------------|
-| <a name="output_dynamodb_table_arn"></a> [dynamodb\_table\_arn](#output\_dynamodb\_table\_arn) | The ARN of the DynamoDB table used for tagging compliance. |
-| <a name="output_dynamodb_table_name"></a> [dynamodb\_table\_name](#output\_dynamodb\_table\_name) | The name of the DynamoDB table used for tagging compliance. |
+| <a name="output_compliance_rule_table_arn"></a> [compliance\_rule\_table\_arn](#output\_compliance\_rule\_table\_arn) | The ARN of the DynamoDB table used for tagging compliance. |
+| <a name="output_compliance_rule_table_name"></a> [compliance\_rule\_table\_name](#output\_compliance\_rule\_table\_name) | The name of the DynamoDB table used for tagging compliance. |
 | <a name="output_organizations_id"></a> [organizations\_id](#output\_organizations\_id) | The ID of the AWS Organization allowed access to the DynamoDB table. |
 | <a name="output_organizations_lambda_arn"></a> [organizations\_lambda\_arn](#output\_organizations\_lambda\_arn) | The ARN of the Lambda function used for handling organization account movements. |
 | <a name="output_organizations_lambda_name"></a> [organizations\_lambda\_name](#output\_organizations\_lambda\_name) | The name of the Lambda function used for handling organization account movements. |

@@ -1,5 +1,5 @@
 
-variable "dynamodb_table_name" {
+variable "compliance_rule_table_name" {
   description = "The name of the DynamoDB table to store tags for AWS resources."
   type        = string
 }
@@ -18,3 +18,4 @@ variable "rules" {
     Values              = optional(list(string), [])
   }))
 }
+

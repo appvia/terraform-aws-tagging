@@ -1,5 +1,5 @@
 
-## Find the dynamodb table 
+## Find the dynamodb table
 data "aws_dynamodb_table" "table" {
-  name = var.dynamodb_table_name
+  name = var.compliance_rule_table_name
 }

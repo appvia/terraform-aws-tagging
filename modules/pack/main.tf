@@ -49,34 +49,34 @@ resource "aws_s3_object" "conformance_pack_template" {
   tags         = var.tags
 
   content = templatefile("${path.module}/assets/conformance-pack.yaml.tmpl", {
-    config_rule_name        = var.config_rule_name
-    description             = var.pack_description
-    dynamodb_table_arn      = var.dynamodb_table_arn
-    lambda_function_arn     = local.lambda_arn
-    max_execution_frequency = var.max_execution_frequency
-    resource_types          = jsonencode(var.resource_types)
+    compliance_rule_table_arn = var.compliance_rule_table_arn
+    config_rule_name          = var.config_rule_name
+    description               = var.pack_description
+    lambda_function_arn       = local.lambda_arn
+    max_execution_frequency   = var.max_execution_frequency
+    resource_types            = jsonencode(var.resource_types)
   })
 
   etag = md5(templatefile("${path.module}/assets/conformance-pack.yaml.tmpl", {
-    config_rule_name        = var.config_rule_name
-    description             = var.pack_description
-    dynamodb_table_arn      = var.dynamodb_table_arn
-    lambda_function_arn     = local.lambda_arn
-    max_execution_frequency = var.max_execution_frequency
-    resource_types          = jsonencode(var.resource_types)
+    compliance_rule_table_arn = var.compliance_rule_table_arn
+    config_rule_name          = var.config_rule_name
+    description               = var.pack_description
+    lambda_function_arn       = local.lambda_arn
+    max_execution_frequency   = var.max_execution_frequency
+    resource_types            = jsonencode(var.resource_types)
   }))
 }
 
-## Provision the custom lambda function which can be shared across multiple 
+## Provision the custom lambda function which can be shared across multiple
 ## config rules or conformance packs
 module "lambda_function" {
   count  = var.lambda_function_arn == null ? 1 : 0
   source = "../validation"
 
+  compliance_rule_table_arn         = var.compliance_rule_table_arn
   cloudwatch_logs_kms_key_id        = var.cloudwatch_logs_kms_key_id
   cloudwatch_logs_log_group_class   = var.cloudwatch_logs_log_group_class
   cloudwatch_logs_retention_in_days = var.cloudwatch_logs_retention_in_days
-  dynamodb_table_arn                = var.dynamodb_table_arn
   lambda_description                = format("Lambda function to evaluate tagging compliance for conformance pack %s", var.conformance_pack_name)
   lambda_name                       = "${var.config_rule_name}-compliance-tagging"
   lambda_role_name                  = "${var.config_rule_name}-compliance-tagging"

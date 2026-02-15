@@ -10,7 +10,7 @@ data "aws_iam_policy_document" "permissions" {
       "dynamodb:Scan",
     ]
     resources = compact([
-      var.dynamodb_table_arn,
+      var.compliance_rule_table_arn,
       var.organizations_table_arn
     ])
   }
@@ -43,15 +43,21 @@ module "lambda_function" {
   trigger_on_package_timestamp = false
 
   ## Environment variables for the Lambda function
-  environment_variables = {
-    ACCOUNT_ID              = local.account_id
-    ENABLE_ORGANIZATIONS    = var.organizations_table_arn != null ? "true" : "false"
-    LOG_LEVEL               = var.lambda_log_level
-    RULES_CACHE_ENABLED     = var.rules_cache_enabled ? "true" : "false"
-    RULES_CACHE_TTL_SECONDS = tostring(var.rules_cache_ttl_seconds)
-    TABLE_ARN               = var.dynamodb_table_arn
-    TABLE_ARN_ORGANIZATIONS = var.organizations_table_arn != null ? var.organizations_table_arn : ""
-  }
+  environment_variables = merge(
+    {
+      ACCOUNT_ID              = local.account_id
+      ENABLE_ORGANIZATIONS    = var.organizations_table_arn != null ? "true" : "false"
+      LOG_LEVEL               = var.lambda_log_level
+      RULES_CACHE_ENABLED     = var.rules_cache_enabled ? "true" : "false"
+      RULES_CACHE_TTL_SECONDS = tostring(var.rules_cache_ttl_seconds)
+    },
+    var.compliance_rule_table_arn != null ? {
+      TABLE_ARN_RULES = var.compliance_rule_table_arn
+    } : null,
+    var.organizations_table_arn != null ? {
+      TABLE_ARN_ORGANIZATIONS = var.organizations_table_arn,
+    } : null,
+  )
 
   ## Lambda Role
   create_role                   = var.lambda_create_role

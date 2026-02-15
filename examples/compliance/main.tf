@@ -7,8 +7,8 @@
 module "compliance" {
   source = "../../modules/compliance"
 
-  ## The name of the DynamoDB table to store tags for AWS resources. 
-  dynamodb_table_name = "tagging-compliance"
+  ## The name of the DynamoDB table to store tags for AWS resources.
+  compliance_rule_table_name = "tagging-compliance"
   ## List of compliance rules to be stored in the DynamoDB table.
   rules = [
     {
@@ -31,3 +31,4 @@ module "compliance" {
     }
   ]
 }
+
