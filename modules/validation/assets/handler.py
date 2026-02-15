@@ -712,6 +712,7 @@ def validate_compliance(
             "action": "validate_compliance",
             "account_id": resource.AccountId,
             "resource_id": resource.ResourceId,
+            "resource_tags": resource.Tags,
             "resource_type": resource.ResourceType,
             "rule_count": len(rules),
         },
@@ -848,13 +849,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
     # Get the table ARN from the environment variable (set by Terraform)
     table_arn = event.get("table_arn") or os.environ.get("TABLE_ARN_RULES")
     # Get the account metadata, which includes organizational unit paths, from the DynamoDB table.
-    accounts_table_arn = event.get("accounts_table_arn") or os.environ.get(
-        "TABLE_ARN_ORGANIZATIONS", None
-    )
+    accounts_table_arn = event.get("accounts_table_arn") or os.environ.get("TABLE_ARN_ORGANIZATIONS")
     # Get the result token from the event, which is used to report compliance results back to AWS Config.
     token = event["resultToken"]
     # Indicates the accounts metadata is enabled
-    enable_accounts_metadata = accounts_table_arn is not None
+    enable_accounts_metadata = (
+        accounts_table_arn is not None and 
+        accounts_table_arn != ""
+    )
 
     # Enable the rules caching from environment variable
     enable_cache = os.environ.get("RULES_CACHE_ENABLED", "false").lower() == "true"
@@ -872,7 +874,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
             "account_id": account_id,
             "accounts_table_arn": accounts_table_arn,
             "cache_ttl_seconds": cache_ttl_seconds,
+            "enable_accounts_metadata": enable_accounts_metadata,
             "enable_cache": enable_cache,
+            "rules_table_arn": table_arn,
         },
     )
 
@@ -896,6 +900,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
                 "action": "lambda_handler",
                 "account_id": resource.AccountId,
                 "resource_id": resource.ResourceId,
+                "resource_type": resource.ResourceType,
             },
         )
         # We have nothing to evaluate, so we return NOT_APPLICABLE for this resource and exit early.
@@ -960,6 +965,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
             extra={
                 "action": "lambda_handler",
                 "account_id": resource.AccountId,
+                "configuration_item": configuration_item,
                 "resource_id": resource.ResourceId,
                 "resource_type": resource.ResourceType,
             },
