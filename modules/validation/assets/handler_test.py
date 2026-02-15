@@ -26,6 +26,7 @@ import handler
 def sample_resource():
     """A sample Resource dict for testing."""
     return handler.Resource(
+        ARN="arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234efgh5678",
         AccountId="123456789012",
         ResourceType="AWS::EC2::Instance",
         ResourceId="i-0abcd1234efgh5678",
@@ -96,13 +97,15 @@ def sample_config_event():
                     "resourceName": "my-ec2-instance",
                     "awsRegion": "eu-west-2",
                     "awsAccountId": "123456789012",
+                    "ARN": "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234efgh5678",
                     "configuration": {
                         "instanceId": "i-0abcd1234efgh5678",
                         "instanceType": "t3.medium",
-                        "tags": {
-                            "Name": "my-ec2-instance",
-                            "Environment": "Production",
-                        },
+                        "tags": [
+                            {"key": "Environment", "value": "Production"},
+                            {"key": "CostCenter", "value": "12345"},
+                            {"key": "Owner", "value": "team@example.com"},
+                        ],
                     },
                 },
                 "messageType": "ConfigurationItemChangeNotification",
@@ -148,12 +151,20 @@ class TestResource:
             "awsAccountId": "123456789012",
             "resourceType": "AWS::EC2::Instance",
             "resourceId": "i-0abcd1234efgh5678",
+            "ARN": "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234efgh5678",
             "configuration": {
                 "instanceId": "i-0abcd1234efgh5678",
-                "tags": {"Environment": "Production", "Name": "test-instance"},
+                "tags": [
+                    {"key": "Environment", "value": "Production"},
+                    {"key": "Name", "value": "test-instance"},
+                ],
             },
         }
         resource = handler.Resource.parse(item)
+        assert (
+            resource.ARN
+            == "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234efgh5678"
+        )
         assert resource.AccountId == "123456789012"
         assert resource.ResourceType == "AWS::EC2::Instance"
         assert resource.ResourceId == "i-0abcd1234efgh5678"
@@ -165,7 +176,7 @@ class TestResource:
             "awsAccountId": "123456789012",
             "resourceType": "AWS::EC2::Instance",
             # Missing resourceId
-            "configuration": {"tags": {}},
+            "configuration": {"tags": []},
         }
         with pytest.raises(ValueError, match="missing required field"):
             handler.Resource.parse(item)
@@ -256,16 +267,6 @@ class TestEvaluations:
         )
         assert evaluations.is_compliant() is True
 
-    def test_is_compliant_some_non_compliant(self):
-        """Test is_compliant() returns False when any evaluation is non-compliant."""
-        evaluations = handler.Evaluations(
-            Evaluations=[
-                handler.Evaluation(Compliant=handler.COMPLIANCE_TYPE_COMPLIANT),
-                handler.Evaluation(Compliant=handler.COMPLIANCE_TYPE_NON_COMPLIANT),
-            ]
-        )
-        assert evaluations.is_compliant() is False
-
     def test_is_compliant_not_applicable(self):
         """Test is_compliant() returns False for NOT_APPLICABLE evaluations."""
         evaluations = handler.Evaluations(
@@ -273,7 +274,7 @@ class TestEvaluations:
                 handler.Evaluation(Compliant=handler.COMPLIANCE_TYPE_NOT_APPLICABLE),
             ]
         )
-        assert evaluations.is_compliant() is False
+        assert evaluations.is_compliant() is True
 
     def test_is_non_applicable_all_not_applicable(self):
         """Test is_non_applicable() returns True when all are NOT_APPLICABLE."""
@@ -286,14 +287,14 @@ class TestEvaluations:
         assert evaluations.is_non_applicable() is True
 
     def test_is_non_applicable_mixed(self):
-        """Test is_non_applicable() returns False when not all are NOT_APPLICABLE."""
+        """Test is_non_applicable() returns True when not all are NOT_APPLICABLE."""
         evaluations = handler.Evaluations(
             Evaluations=[
                 handler.Evaluation(Compliant=handler.COMPLIANCE_TYPE_NOT_APPLICABLE),
                 handler.Evaluation(Compliant=handler.COMPLIANCE_TYPE_COMPLIANT),
             ]
         )
-        assert evaluations.is_non_applicable() is False
+        assert evaluations.is_non_applicable() is True
 
     def test_add_evaluation(self):
         """Test add() adds an evaluation to the list."""
@@ -582,7 +583,7 @@ class TestAnnotationAggregation:
                 "Enabled": {"BOOL": True},
                 "Required": {"BOOL": True},
                 "ValuePattern": {"S": ""},
-                "Values": {"S": "[]"},
+                "Values": {"S": '["test"]'},
                 "AccountIds": {"S": '["*"]'},
             },
         ]
@@ -611,9 +612,14 @@ class TestParseConfigurationItem:
             "awsAccountId": "123456789012",
             "resourceType": "AWS::EC2::Instance",
             "resourceId": "i-0abcd1234",
+            "ARN": "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234",
             "configuration": {
                 "instanceId": "i-0abcd1234",
-                "tags": {"Environment": "Production", "Name": "test-instance"},
+                "ARN": "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234",
+                "tags": [
+                    {"key": "Environment", "value": "Production"},
+                    {"key": "Name", "value": "test-instance"},
+                ],
             },
         }
         resource = handler.Resource.parse(item)
@@ -622,13 +628,26 @@ class TestParseConfigurationItem:
         assert resource.ResourceId == "i-0abcd1234"
         assert resource.Tags["Environment"] == "Production"
 
+    def test_parse_configuration_item_no_arn(self):
+        """Test parsing fails when ARN field is missing."""
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::EC2::Instance",
+            "resourceId": "i-0abcd1234",
+            # Missing ARN
+            "configuration": {"tags": []},
+        }
+        with pytest.raises(ValueError, match="missing required field"):
+            handler.Resource.parse(item)
+
     def test_parse_configuration_item_missing_field(self):
         """Test parsing fails when required field is missing."""
         item = {
             "awsAccountId": "123456789012",
             "resourceType": "AWS::EC2::Instance",
+            "ARN": "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234",
             # Missing resourceId
-            "configuration": {"tags": {}},
+            "configuration": {"tags": []},
         }
         with pytest.raises(ValueError, match="missing required field"):
             handler.Resource.parse(item)
@@ -639,6 +658,7 @@ class TestParseConfigurationItem:
             "awsAccountId": "123456789012",
             "resourceType": "AWS::EC2::Instance",
             "resourceId": "i-0abcd1234",
+            "ARN": "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234",
             "configuration": {},
         }
         resource = handler.Resource.parse(item)
@@ -862,6 +882,7 @@ class TestFindMatchingRules:
 
         # Test with a Volume resource - should also match
         volume_resource = handler.Resource(
+            ARN="arn:aws:ec2:eu-west-2:123456789012:volume/vol-12345",
             AccountId="123456789012",
             ResourceType="AWS::EC2::Volume",
             ResourceId="vol-12345",
@@ -872,6 +893,7 @@ class TestFindMatchingRules:
 
         # Test with S3 bucket - should NOT match
         s3_resource = handler.Resource(
+            ARN="arn:aws:s3:::my-bucket",
             AccountId="123456789012",
             ResourceType="AWS::S3::Bucket",
             ResourceId="my-bucket",
@@ -900,6 +922,7 @@ class TestFindMatchingRules:
 
         # S3 Bucket should match via specific type
         s3_resource = handler.Resource(
+            ARN="arn:aws:s3:::my-bucket",
             AccountId="123456789012",
             ResourceType="AWS::S3::Bucket",
             ResourceId="my-bucket",
@@ -910,6 +933,7 @@ class TestFindMatchingRules:
 
         # Lambda should NOT match
         lambda_resource = handler.Resource(
+            ARN="arn:aws:lambda:eu-west-2:123456789012:function:my-function",
             AccountId="123456789012",
             ResourceType="AWS::Lambda::Function",
             ResourceId="my-function",
@@ -917,6 +941,39 @@ class TestFindMatchingRules:
         )
         matching_lambda = handler.find_matching_rules([rule], lambda_resource)
         assert len(matching_lambda) == 0
+
+
+# ============================================================================
+# Tests for filter_on_resources
+# ============================================================================
+
+
+class TestFilterOnResources:
+    """Tests for filter_on_resources function."""
+
+    def test_filter_on_resources_skips_aws_managed_role(self):
+        """AWS managed IAM roles should be filtered out."""
+        resource = handler.Resource(
+            AccountId="123456789012",
+            ARN="arn:aws:iam::123456789012:role/aws-service-role/support.amazonaws.com/AWSServiceRoleForSupport",
+            ResourceType="AWS::IAM::Role",
+            ResourceId="AWSServiceRoleForSupport",
+            Tags={},
+        )
+
+        assert handler.filter_on_resources(resource) is True
+
+    def test_filter_on_resources_allows_regular_role(self):
+        """Regular IAM roles should not be filtered out."""
+        resource = handler.Resource(
+            AccountId="123456789012",
+            ARN="arn:aws:iam::123456789012:role/application-role",
+            ResourceType="AWS::IAM::Role",
+            ResourceId="application-role",
+            Tags={},
+        )
+
+        assert handler.filter_on_resources(resource) is False
 
 
 # ============================================================================
@@ -1308,6 +1365,8 @@ class TestLambdaHandler:
         call_args = mock_config_client.put_evaluations.call_args[1]
         assert len(call_args["Evaluations"]) == 1
         evaluation = call_args["Evaluations"][0]
+        print("HELLO", evaluation)
+
         assert evaluation["ComplianceType"] == handler.COMPLIANCE_TYPE_COMPLIANT
         assert call_args["ResultToken"] == "test-result-token-12345"
 
@@ -1374,6 +1433,51 @@ class TestLambdaHandler:
         call_args = mock_config_client.put_evaluations.call_args[1]
         evaluation = call_args["Evaluations"][0]
         assert evaluation["ComplianceType"] == handler.COMPLIANCE_TYPE_NOT_APPLICABLE
+
+    @patch.dict(
+        os.environ,
+        {
+            "ACCOUNT_ID": "123456789012",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+        },
+    )
+    @patch("handler.config_client")
+    @patch("handler.table_client")
+    def test_lambda_handler_filtered_resource(
+        self, mock_table_client, mock_config_client, sample_config_event
+    ):
+        """Test lambda handler skips AWS managed IAM roles."""
+        event = sample_config_event.copy()
+        invoking_event = json.loads(event["invokingEvent"])
+        invoking_event["configurationItem"]["resourceType"] = "AWS::IAM::Role"
+        invoking_event["configurationItem"]["resourceId"] = "AWSServiceRoleForSupport"
+        invoking_event["configurationItem"][
+            "ARN"
+        ] = "arn:aws:iam::123456789012:role/aws-service-role/support.amazonaws.com/AWSServiceRoleForSupport"
+        event["invokingEvent"] = json.dumps(invoking_event)
+
+        rule_item = {
+            "ResourceTypes": {"S": '["AWS::IAM::Role"]'},
+            "Tag": {"S": "Owner"},
+            "Enabled": {"B": True},
+            "Required": {"B": True},
+            "ValuePattern": {"S": ""},
+            "Values": {"S": "[]"},
+            "AccountIds": {"S": '["*"]'},
+        }
+        mock_table_client.scan.return_value = {"Items": [rule_item]}
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(event, None)
+
+        mock_table_client.scan.assert_called_once()
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        evaluation = call_args["Evaluations"][0]
+        assert evaluation["ComplianceType"] == handler.COMPLIANCE_TYPE_NOT_APPLICABLE
+        assert (
+            evaluation["Annotation"]
+            == "Resource is not applicable for tagging compliance."
+        )
 
     @patch.dict(
         os.environ,

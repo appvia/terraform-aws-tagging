@@ -81,6 +81,8 @@ class AccountMetadata:
 class Resource:
     # The AWS account ID that owns the resource being evaluated.
     AccountId: str
+    # The ARN of the resource being evaluated.
+    ARN: str
     # The AWS resource type being evaluated.
     ResourceType: str
     # The unique identifier of the resource being evaluated.
@@ -93,10 +95,11 @@ class Resource:
         """Parse the AWS Config configuration item to return a Resource object."""
         # Check for the following items
         for field_name in [
+            "ARN",
             "awsAccountId",
-            "resourceType",
-            "resourceId",
             "configuration",
+            "resourceId",
+            "resourceType",
         ]:
             if raw.get(field_name, None) is None:
                 raise ValueError(
@@ -104,13 +107,20 @@ class Resource:
                 )
 
         # Retrieve the tags from the configuration item, which are nested under the "configuration" key
+        tags = {}
         configuration = raw.get("configuration", {})
+
+        # We need to parse the tags from the configuration item
+        for tag in configuration.get("tags", []):
+            if "key" in tag and "value" in tag:
+                tags[tag["key"]] = tag["value"]
 
         return cls(
             AccountId=raw.get("awsAccountId", None),
+            ARN=raw.get("ARN", None),
             ResourceType=raw.get("resourceType", None),
             ResourceId=raw.get("resourceId", None),
-            Tags=configuration.get("tags", {}),
+            Tags=tags,
         )
 
     def contains_tag(self, tag_key: str) -> bool:
@@ -182,13 +192,21 @@ class Rule:
     def parse(cls, raw: Dict[str, Any]) -> "Rule":
         """Parse a raw DynamoDB item into a Rule object."""
 
+        logger.debug(
+            "Parsing tagging rule from DynamoDB item",
+            extra={
+                "action": "Rule.parse",
+                "raw_item": raw,
+            },
+        )
+
         return cls(
             AccountIds=json.loads(raw.get("AccountIds", {}).get("S", '["*"]')),
-            Enabled=raw.get("Enabled", {}).get("B", True),
+            Enabled=raw.get("Enabled", {}).get("BOOL", True),
             OrganizationalPaths=json.loads(
                 raw.get("OrganizationalPaths", {}).get("S", "[]")
             ),
-            Required=raw.get("Required", {}).get("B", True),
+            Required=raw.get("Required", {}).get("BOOL", True),
             ResourceTypes=json.loads(raw.get("ResourceTypes", {}).get("S", "[]")),
             RuleId=raw.get("RuleId", {}).get("S", ""),
             Tag=raw.get("Tag", {}).get("S", ""),
@@ -257,17 +275,34 @@ class Evaluations:
 
         # Ensure we return false to non-applicable resources
         if self.is_non_applicable():
-            return False
+            return True
 
         return all(
             evaluation.Compliant == COMPLIANCE_TYPE_COMPLIANT
             for evaluation in self.Evaluations
         )
 
+    def status(self) -> str:
+        """
+        Get the overall compliance status based on the evaluations.
+
+        Returns:
+            COMPLIANT if all evaluations are compliant,
+            NON_COMPLIANT if any evaluation is non-compliant,
+            NOT_APPLICABLE if any evaluation is not applicable and none are non-compliant.
+        """
+
+        if self.is_non_applicable():
+            return COMPLIANCE_TYPE_NOT_APPLICABLE
+        elif self.is_compliant():
+            return COMPLIANCE_TYPE_COMPLIANT
+        else:
+            return COMPLIANCE_TYPE_NON_COMPLIANT
+
     def is_non_applicable(self) -> bool:
         """Checks if the evaluation is marked as not applicable."""
 
-        return all(
+        return any(
             evaluation.Compliant == COMPLIANCE_TYPE_NOT_APPLICABLE
             for evaluation in self.Evaluations
         )
@@ -616,6 +651,7 @@ def find_matching_rules(
             "rule.account_ids": rule.AccountIds,
             "rule.enabled": rule.Enabled,
             "rule.organizational_paths": rule.OrganizationalPaths,
+            "rule.required": rule.Required,
             "rule.resource_types": rule.ResourceTypes,
             "rule.ruleId": rule.RuleId,
         }
@@ -687,6 +723,43 @@ def find_matching_rules(
     return matching_rules
 
 
+def filter_on_resources(
+    resource: Resource,
+) -> bool:
+    """
+    Filter function to determine if we should evaluate the resource for
+    tagging compliance based on its type.
+
+    Args:
+        resource: The AWS resource being evaluated.
+
+    Returns:
+        True if the resource should be evaluated for tagging compliance, False otherwise.
+    """
+
+    if resource.ResourceType.startswith("AWS::IAM::Role"):
+        # We can skip anything related to AWS Managed Roles
+        for item in [
+            "aws-controltower",
+            "aws-reserved/sso.amazonaws.com",
+            "aws-service-role",
+            "AWSControlTower",
+        ]:
+            if resource.ARN and item in resource.ARN:
+                logger.info(
+                    "Skipping AWS manged IAM roles",
+                    extra={
+                        "action": "filter_on_resources",
+                        "account_id": resource.AccountId,
+                        "resource_id": resource.ResourceId,
+                        "resource_type": resource.ResourceType,
+                    },
+                )
+                return True
+
+    return False
+
+
 def validate_compliance(
     rules: List[Rule],
     resource: Resource,
@@ -718,6 +791,13 @@ def validate_compliance(
         },
     )
 
+    # Check if we can skip this evaluation based on the resource type
+    if filter_on_resources(resource) == True:
+        conditions.add_not_applicable(
+            annotation="Resource type is excluded from tagging compliance evaluation based on its ARN or type",
+        )
+        return conditions
+
     for rule in rules:
         # Get the tag in question from the rule
         tag = rule.Tag
@@ -746,6 +826,7 @@ def validate_compliance(
                     rule=rule,
                     value=resource.Tags[tag],
                 )
+
         elif not rule.Required and not resource.contains_tag(tag):
             # For optional tags that are not present, mark as compliant
             conditions.add_compliant(
@@ -759,7 +840,9 @@ def validate_compliance(
             "action": "validate_compliance",
             "account_id": resource.AccountId,
             "condition_count": len(conditions.Evaluations),
+            "resource_arn": resource.ARN,
             "resource_id": resource.ResourceId,
+            "resource_tags": resource.Tags,
             "resource_type": resource.ResourceType,
         },
     )
@@ -849,13 +932,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
     # Get the table ARN from the environment variable (set by Terraform)
     table_arn = event.get("table_arn") or os.environ.get("TABLE_ARN_RULES")
     # Get the account metadata, which includes organizational unit paths, from the DynamoDB table.
-    accounts_table_arn = event.get("accounts_table_arn") or os.environ.get("TABLE_ARN_ORGANIZATIONS")
+    accounts_table_arn = event.get("accounts_table_arn") or os.environ.get(
+        "TABLE_ARN_ORGANIZATIONS"
+    )
     # Get the result token from the event, which is used to report compliance results back to AWS Config.
     token = event["resultToken"]
     # Indicates the accounts metadata is enabled
     enable_accounts_metadata = (
-        accounts_table_arn is not None and 
-        accounts_table_arn != ""
+        accounts_table_arn is not None and accounts_table_arn != ""
     )
 
     # Enable the rules caching from environment variable
@@ -958,36 +1042,22 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
             # Evaluate the resource against the matching rules and determine compliance.
             evaluations = validate_compliance(matching_rules, resource)
 
-    # Log the evaluations for debugging purposes before reporting to AWS Config
-    if not evaluations.is_compliant():
-        logger.info(
-            "Resource is non-compliant with tagging rules",
-            extra={
-                "action": "lambda_handler",
-                "account_id": resource.AccountId,
-                "configuration_item": configuration_item,
-                "resource_id": resource.ResourceId,
-                "resource_type": resource.ResourceType,
-            },
-        )
+    # Provide logging with the compliance check
+    logger.info(
+        "Compliance evaluation completed for resource",
+        extra={
+            "action": "lambda_handler",
+            "account_id": resource.AccountId,
+            "compliance_failures": "; ".join(evaluations.get_non_compliance_reasons()),
+            "compliance_status": evaluations.status(),
+            "resource_arn": resource.ARN,
+            "resource_id": resource.ResourceId,
+            "resource_tags": resource.Tags,
+            "resource_type": resource.ResourceType,
+        },
+    )
 
-        # Print each of the evaluations that resulted in non-compliance for debugging
-        for evaluation in evaluations.Evaluations:
-            if evaluation.Compliant == COMPLIANCE_TYPE_NON_COMPLIANT:
-                logger.info(
-                    "Resource is non-compliant with tagging rule",
-                    extra={
-                        "action": "lambda_handler",
-                        "account_id": resource.AccountId,
-                        "annotation": evaluation.Annotation,
-                        "resource_id": resource.ResourceId,
-                        "resource_type": resource.ResourceType,
-                        "rule_id": evaluation.RuleId,
-                        "tag_key": evaluation.TagKey,
-                        "tag_value": evaluation.TagValue,
-                    },
-                )
-
+    # Update AWS Config with the result of the compliance check
     if evaluations.is_non_applicable():
         compliance_type = COMPLIANCE_TYPE_NOT_APPLICABLE
         annotation = "Resource is not applicable for tagging compliance."
@@ -1018,13 +1088,4 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
             }
         ],
         ResultToken=token,
-    )
-
-    logger.info(
-        "Evaluation of resource compliance with tagging rules reported to AWS Config",
-        extra={
-            "action": "lambda_handler",
-            "compliance_type": compliance_type,
-            "resource_id": resource.ResourceId,
-        },
     )
