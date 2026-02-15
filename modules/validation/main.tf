@@ -36,6 +36,7 @@ module "lambda_function" {
   hash_extra                   = "tagging_compliance"
   memory_size                  = var.lambda_memory_size
   runtime                      = var.lambda_runtime
+  source_path                  = "${path.root}/assets/handler.py"
   tags                         = merge(var.tags, { "Name" = var.lambda_name })
   timeout                      = var.lambda_timeout
   trigger_on_package_timestamp = false
