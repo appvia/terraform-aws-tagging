@@ -33,13 +33,13 @@ module "compliance" {
   ]
 }
 
-## Provision the AWS Config rule to evaluate compliance of AWS 
+## Provision the AWS Config rule to evaluate compliance of AWS
 ## resources with the rules stored in the DynamoDB table
 module "config" {
   source = "../../modules/config"
 
-  ## The name of the DynamoDB table to store tags for AWS resources. 
-  dynamodb_table_arn = module.compliance.dynamodb_table_arn
+  ## The name of the DynamoDB table to store tags for AWS resources.
+  compliance_rule_table_arn = module.compliance.compliance_rule_table_arn
   ## The name of the AWS Config rule to create
   config_name = "tagging-compliance"
   ## The resource types to evaluate for compliance
@@ -49,3 +49,4 @@ module "config" {
     module.compliance,
   ]
 }
+

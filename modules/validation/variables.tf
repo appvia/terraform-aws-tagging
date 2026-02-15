@@ -4,6 +4,11 @@ variable "allowed_source_accounts" {
   default     = []
 }
 
+variable "compliance_rule_table_arn" {
+  description = "The ARN of the DynamoDB table to store tags for AWS resources."
+  type        = string
+}
+
 variable "cloudwatch_logs_kms_key_id" {
   description = "The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted."
   type        = string
@@ -20,11 +25,6 @@ variable "cloudwatch_logs_retention_in_days" {
   description = "The number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827."
   type        = number
   default     = 7
-}
-
-variable "dynamodb_table_arn" {
-  description = "The ARN of the DynamoDB table to store tags for AWS resources."
-  type        = string
 }
 
 variable "lambda_architectures" {

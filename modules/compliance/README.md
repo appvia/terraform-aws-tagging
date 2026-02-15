@@ -501,7 +501,7 @@ Rules stored by this module are evaluated by the AWS Config Lambda function as f
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_dynamodb_table_name"></a> [dynamodb\_table\_name](#input\_dynamodb\_table\_name) | The name of the DynamoDB table to store tags for AWS resources. | `string` | n/a | yes |
+| <a name="input_compliance_rule_table_name"></a> [compliance\_rule\_table\_name](#input\_compliance\_rule\_table\_name) | The name of the DynamoDB table to store tags for AWS resources. | `string` | n/a | yes |
 | <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds          = optional(list(string), ["*"])<br/>    Enabled             = optional(bool, true)<br/>    OrganizationalPaths = optional(list(string), [])<br/>    Required            = optional(bool, true)<br/>    ResourceTypes       = list(string)<br/>    RuleId              = string<br/>    Tag                 = string<br/>    ValuePattern        = optional(string, "")<br/>    Values              = optional(list(string), [])<br/>  }))</pre> | n/a | yes |
 
 ## Outputs

@@ -7,3 +7,4 @@ output "lambda_arn" {
   description = "The ARN of the Lambda function for tagging compliance."
   value       = module.lambda_function.lambda_arn
 }
+

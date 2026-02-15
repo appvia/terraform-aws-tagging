@@ -300,7 +300,7 @@ View compliance status directly in the AWS Config console:
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_dynamodb_table_arn"></a> [dynamodb\_table\_arn](#input\_dynamodb\_table\_arn) | The ARN of the DynamoDB table to store tags for AWS resources. | `string` | n/a | yes |
+| <a name="input_compliance_rule_table_arn"></a> [compliance\_rule\_table\_arn](#input\_compliance\_rule\_table\_arn) | The ARN of the DynamoDB table to store tags for AWS resources. | `string` | n/a | yes |
 | <a name="input_allowed_source_accounts"></a> [allowed\_source\_accounts](#input\_allowed\_source\_accounts) | List of AWS account IDs allowed to invoke this Lambda function. If not provided and organization\_id is set, allows all accounts in the organization. | `list(string)` | `[]` | no |
 | <a name="input_cloudwatch_logs_kms_key_id"></a> [cloudwatch\_logs\_kms\_key\_id](#input\_cloudwatch\_logs\_kms\_key\_id) | The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted. | `string` | `null` | no |
 | <a name="input_cloudwatch_logs_log_group_class"></a> [cloudwatch\_logs\_log\_group\_class](#input\_cloudwatch\_logs\_log\_group\_class) | The log group class for CloudWatch Logs. Valid values are STANDARD and INFREQUENT\_ACCESS. | `string` | `"STANDARD"` | no |

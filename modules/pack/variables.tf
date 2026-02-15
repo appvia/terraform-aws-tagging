@@ -1,3 +1,8 @@
+variable "compliance_rule_table_arn" {
+  description = "ARN of the DynamoDB table containing compliance rules"
+  type        = string
+}
+
 variable "conformance_pack_name" {
   description = "Name of the AWS Config Conformance Pack"
   type        = string
@@ -32,11 +37,6 @@ variable "deploy_organization_wide" {
   description = "Whether to deploy the conformance pack organization-wide (requires Organizations management account)"
   type        = bool
   default     = false
-}
-
-variable "dynamodb_table_arn" {
-  description = "ARN of the DynamoDB table containing compliance rules"
-  type        = string
 }
 
 variable "excluded_accounts" {

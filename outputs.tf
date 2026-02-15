@@ -1,9 +1,9 @@
-output "dynamodb_table_arn" {
+output "compliance_rule_table_arn" {
   description = "The ARN of the DynamoDB table used for tagging compliance."
   value       = aws_dynamodb_table.compliance.arn
 }
 
-output "dynamodb_table_name" {
+output "compliance_rule_table_name" {
   description = "The name of the DynamoDB table used for tagging compliance."
   value       = aws_dynamodb_table.compliance.name
 }

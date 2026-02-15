@@ -83,11 +83,12 @@ module "compliance_rules" {
   count  = length(var.rules) > 0 ? 1 : 0
   source = "./modules/compliance"
 
-  dynamodb_table_name = aws_dynamodb_table.compliance.name
-  rules               = var.rules
+  compliance_rule_table_name = aws_dynamodb_table.compliance.name
+  rules                      = var.rules
 
   depends_on = [
     aws_dynamodb_table.compliance,
     aws_dynamodb_resource_policy.compliance,
   ]
 }
+
