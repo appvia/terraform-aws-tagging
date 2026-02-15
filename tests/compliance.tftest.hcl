@@ -10,7 +10,7 @@ run "basic" {
   }
 
   variables {
-    dynamodb_table_name = "tagging-compliance"
+    compliance_rule_table_name = "tagging-compliance"
     rules = [
       {
         RuleId        = "ec2-tagging-rule"

@@ -12,9 +12,52 @@ permissions:
   contents: read
   pull-requests: write
 
+env:
+  PYTHON_VERSION: "3.12"
+
 jobs:
   module-validation:
     uses: appvia/appvia-cicd-workflows/.github/workflows/terraform-module-validation.yml@main
     name: Module Validation
     with:
       working-directory: .
+
+  python-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Dependencies
+        run: |
+          pip3 install black
+      - name: Run code formatting
+        run: |
+          make format-python
+      - name: Check for formatting changes
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "Code is not formatted. Please run 'make format-python' and commit the changes."
+            exit 1
+          fi
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Dependencies
+        run: |
+          pip3 install pytest boto3
+      - name: Run unit tests
+        env:
+          AWS_DEFAULT_REGION: "eu-west-2"
+        run: |
+          make python-tests
