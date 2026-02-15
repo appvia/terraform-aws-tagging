@@ -38,6 +38,12 @@ variable "lambda_architectures" {
   default     = ["arm64", "x86_64"]
 }
 
+variable "lambda_artifacts_dir" {
+  description = "The directory to store any generated artifacts for the lambda"
+  type        = string
+  default     = "builds"
+}
+
 variable "lambda_create_role" {
   description = "Indicates we should create the role"
   type        = bool

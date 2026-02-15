@@ -8,6 +8,7 @@ module "lambda_function" {
   cloudwatch_logs_retention_in_days = var.cloudwatch_logs_retention_in_days
   dynamodb_table_arn                = var.dynamodb_table_arn
   lambda_architectures              = var.lambda_architectures
+  lambda_artifacts_dir              = var.lambda_artifacts_dir
   lambda_create_role                = var.lambda_create_role
   lambda_description                = var.lambda_description
   lambda_log_level                  = var.lambda_log_level

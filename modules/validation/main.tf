@@ -29,6 +29,7 @@ module "lambda_function" {
   version = "8.2.0"
 
   architectures                = var.lambda_architectures
+  artifacts_dir                = var.lambda_artifacts_dir
   function_name                = var.lambda_name
   function_tags                = var.tags
   description                  = var.lambda_description
@@ -36,7 +37,7 @@ module "lambda_function" {
   hash_extra                   = "tagging_compliance"
   memory_size                  = var.lambda_memory_size
   runtime                      = var.lambda_runtime
-  source_path                  = "${path.root}/assets/handler.py"
+  source_path                  = "${path.module}/assets/handler.py"
   tags                         = merge(var.tags, { "Name" = var.lambda_name })
   timeout                      = var.lambda_timeout
   trigger_on_package_timestamp = false
