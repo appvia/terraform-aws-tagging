@@ -5,7 +5,10 @@ Resources:
       ConfigRuleName: ${config_rule_name}
       Description: ${description}
       Scope:
-        ComplianceResourceTypes: ${resource_types}
+        ComplianceResourceTypes: 
+          ${ for resource in resource_types ~}
+          - ${resource}
+          ${- endfor ~}
       Source:
         Owner: CUSTOM_LAMBDA
         SourceIdentifier: ${lambda_function_arn}
@@ -14,8 +17,8 @@ Resources:
             MessageType: ConfigurationItemChangeNotification
           - EventSource: aws.config
             MessageType: OversizedConfigurationItemChangeNotification
+          {% if config_frequency != null %}
           - EventSource: aws.config
             MessageType: ScheduledNotification
-            MaximumExecutionFrequency: ${max_execution_frequency}
-      InputParameters:
-        TABLE_ARN_RULES: ${compliance_rule_table_arn}
+            MaximumExecutionFrequency: ${config_frequency}
+          {% endif %}

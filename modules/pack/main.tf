@@ -50,20 +50,20 @@ resource "aws_s3_object" "conformance_pack_template" {
 
   content = templatefile("${path.module}/assets/conformance-pack.yaml.tmpl", {
     compliance_rule_table_arn = var.compliance_rule_table_arn
+    config_frequency          = var.config_frequency
     config_rule_name          = var.config_rule_name
     description               = var.pack_description
     lambda_function_arn       = local.lambda_arn
-    max_execution_frequency   = var.max_execution_frequency
-    resource_types            = jsonencode(var.resource_types)
+    resource_types            = var.resource_types
   })
 
   etag = md5(templatefile("${path.module}/assets/conformance-pack.yaml.tmpl", {
     compliance_rule_table_arn = var.compliance_rule_table_arn
+    config_frequency          = var.config_frequency
     config_rule_name          = var.config_rule_name
     description               = var.pack_description
     lambda_function_arn       = local.lambda_arn
-    max_execution_frequency   = var.max_execution_frequency
-    resource_types            = jsonencode(var.resource_types)
+    resource_types            = var.resource_types
   }))
 }
 

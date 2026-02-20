@@ -21,6 +21,21 @@ variable "compliance_rule_table_arn" {
   type        = string
 }
 
+# https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.aws_config/MaximumExecutionFrequency.html
+variable "config_frequency" {
+  description = "Optionally frequency to run rule in addition to triggering on configuration changes."
+  type        = string
+  default     = "TwentyFour_Hours"
+
+  validation {
+    condition = var.config_frequency == null || contains(
+      ["One_Hour", "Three_Hours", "Six_Hours", "Twelve_Hours", "TwentyFour_Hours"],
+      var.config_frequency
+    )
+    error_message = "Config frequency must be one of: One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours"
+  }
+}
+
 variable "config_name" {
   description = "The name of the AWS Config rule"
   type        = string
@@ -30,6 +45,28 @@ variable "config_name" {
 variable "config_resource_types" {
   description = "List of AWS resource types to evaluate (https://docs.aws.amazon.com/config/latest/developerguide/resource-config-reference.html)"
   type        = list(string)
+  default = [
+    "AWS::ACM::Certificate",
+    "AWS::AutoScaling::AutoScalingGroup",
+    "AWS::CloudFormation::Stack",
+    "AWS::DynamoDB::Table",
+    "AWS::EC2::Instance",
+    "AWS::EC2::InternetGateway",
+    "AWS::EC2::RouteTable",
+    "AWS::EC2::SecurityGroup",
+    "AWS::EC2::Subnet",
+    "AWS::EC2::VPC",
+    "AWS::EC2::VPNConnection",
+    "AWS::EC2::Volume",
+    "AWS::ElasticLoadBalancing::LoadBalancer",
+    "AWS::ElasticLoadBalancingV2::LoadBalancer",
+    "AWS::IAM::Role",
+    "AWS::Lambda::Function",
+    "AWS::RDS::DBInstance",
+    "AWS::RDS::DBSnapshot",
+    "AWS::Redshift::Cluster",
+    "AWS::S3::Bucket",
+  ]
 }
 
 variable "lambda_architectures" {

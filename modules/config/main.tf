@@ -27,8 +27,10 @@ module "lambda_function" {
 resource "aws_config_config_rule" "tagging_compliance" {
   name        = var.config_name
   description = "Custom AWS Config rule to evaluate tagging compliance using a Lambda function."
+  tags        = var.tags
 
   scope {
+    # We only trigger when one of the following resources is changed 
     compliance_resource_types = var.config_resource_types
   }
 
@@ -43,6 +45,16 @@ resource "aws_config_config_rule" "tagging_compliance" {
     source_detail {
       event_source = "aws.config"
       message_type = "OversizedConfigurationItemChangeNotification"
+    }
+
+    dynamic "source_detail" {
+      for_each = var.config_frequency != null ? [1] : []
+
+      content {
+        event_source                = "aws.config"
+        maximum_execution_frequency = var.config_frequency
+        message_type                = "ScheduledNotification"
+      }
     }
   }
 

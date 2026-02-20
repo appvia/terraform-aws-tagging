@@ -9,6 +9,22 @@ variable "conformance_pack_name" {
   default     = "tagging-compliance"
 }
 
+variable "config_frequency" {
+  description = "Maximum frequency for Config rule evaluation"
+  type        = string
+  default     = "TWENTY_FOUR_HOURS"
+  validation {
+    condition = contains([
+      "One_Hour",
+      "Three_Hours",
+      "Six_Hours",
+      "Twelve_Hours",
+      "TwentyFour_Hours"
+    ], var.config_frequency)
+    error_message = "config_frequency must be one of: One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours"
+  }
+}
+
 variable "config_rule_name" {
   description = "Name of the AWS Config rule within the conformance pack"
   type        = string
@@ -57,22 +73,6 @@ variable "lambda_function_arn" {
   default     = null
 }
 
-variable "max_execution_frequency" {
-  description = "Maximum frequency for Config rule evaluation"
-  type        = string
-  default     = "TwentyFour_Hours"
-  validation {
-    condition = contains([
-      "One_Hour",
-      "Three_Hours",
-      "Six_Hours",
-      "Twelve_Hours",
-      "TwentyFour_Hours"
-    ], var.max_execution_frequency)
-    error_message = "max_execution_frequency must be one of: One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours"
-  }
-}
-
 variable "pack_description" {
   description = "Description of the conformance pack"
   type        = string
@@ -82,7 +82,28 @@ variable "pack_description" {
 variable "resource_types" {
   description = "List of AWS resource types to evaluate (e.g., AWS::EC2::Instance)"
   type        = list(string)
-  default     = ["AWS::*"]
+  default = [
+    "AWS::ACM::Certificate",
+    "AWS::AutoScaling::AutoScalingGroup",
+    "AWS::CloudFormation::Stack",
+    "AWS::DynamoDB::Table",
+    "AWS::EC2::Instance",
+    "AWS::EC2::InternetGateway",
+    "AWS::EC2::RouteTable",
+    "AWS::EC2::SecurityGroup",
+    "AWS::EC2::Subnet",
+    "AWS::EC2::VPC",
+    "AWS::EC2::VPNConnection",
+    "AWS::EC2::Volume",
+    "AWS::ElasticLoadBalancing::LoadBalancer",
+    "AWS::ElasticLoadBalancingV2::LoadBalancer",
+    "AWS::IAM::Role",
+    "AWS::Lambda::Function",
+    "AWS::RDS::DBInstance",
+    "AWS::RDS::DBSnapshot",
+    "AWS::Redshift::Cluster",
+    "AWS::S3::Bucket",
+  ]
 }
 
 variable "s3_bucket_name" {
