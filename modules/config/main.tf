@@ -36,13 +36,34 @@ resource "aws_config_config_rule" "tagging_compliance" {
     owner             = "CUSTOM_LAMBDA"
     source_identifier = module.lambda_function.lambda_arn
 
-    source_detail {
-      event_source = "aws.config"
-      message_type = "ConfigurationItemChangeNotification"
+    dynamic "source_detail" {
+      for_each = var.configuration_item_change_enabled ? [1] : []
+      content {
+        event_source = "aws.config"
+        message_type = "ConfigurationItemChangeNotification"
+      }
     }
-    source_detail {
-      event_source = "aws.config"
-      message_type = "OversizedConfigurationItemChangeNotification"
+    dynamic "source_detail" {
+      for_each = var.configuration_item_change_enabled ? [1] : []
+      content {
+        event_source = "aws.config"
+        message_type = "OversizedConfigurationItemChangeNotification"
+      }
+    }
+    dynamic "source_detail" {
+      for_each = var.periodic_evaluation_enabled ? [1] : []
+      content {
+        event_source                = "aws.config"
+        message_type                = "ScheduledNotification"
+        maximum_execution_frequency = var.maximum_execution_frequency
+      }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.configuration_item_change_enabled || var.periodic_evaluation_enabled
+      error_message = "At least one of configuration_item_change_enabled or periodic_evaluation_enabled must be true."
     }
   }
 
