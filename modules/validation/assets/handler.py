@@ -958,6 +958,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
             "account_id": account_id,
             "accounts_table_arn": accounts_table_arn,
             "cache_ttl_seconds": cache_ttl_seconds,
+            "config_event": event,
             "enable_accounts_metadata": enable_accounts_metadata,
             "enable_cache": enable_cache,
             "rules_table_arn": table_arn,

@@ -32,6 +32,35 @@ variable "config_resource_types" {
   type        = list(string)
 }
 
+variable "configuration_item_change_enabled" {
+  description = "When true, the rule is invoked when AWS Config records a configuration change (including oversized configuration notifications) for resources in scope. Set to false and enable periodic_evaluation_enabled to run only on a schedule."
+  type        = bool
+  default     = true
+}
+
+variable "maximum_execution_frequency" {
+  description = "Maximum interval between periodic evaluations when periodic_evaluation_enabled is true. Values: One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours."
+  type        = string
+  default     = "TwentyFour_Hours"
+
+  validation {
+    condition = contains([
+      "One_Hour",
+      "Three_Hours",
+      "Six_Hours",
+      "Twelve_Hours",
+      "TwentyFour_Hours"
+    ], var.maximum_execution_frequency)
+    error_message = "maximum_execution_frequency must be one of: One_Hour, Three_Hours, Six_Hours, Twelve_Hours, TwentyFour_Hours."
+  }
+}
+
+variable "periodic_evaluation_enabled" {
+  description = "When true, AWS Config also invokes the rule on a recurring schedule; use maximum_execution_frequency to set how often. Combine with configuration_item_change_enabled for both change-driven and scheduled evaluations."
+  type        = bool
+  default     = false
+}
+
 variable "lambda_architectures" {
   description = "The lambda architecture to use. Valid values are x86_64 and arm64."
   type        = list(string)
