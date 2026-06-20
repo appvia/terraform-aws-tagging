@@ -313,7 +313,7 @@ View compliance status directly in the AWS Config console:
 | <a name="input_lambda_memory_size"></a> [lambda\_memory\_size](#input\_lambda\_memory\_size) | The amount of memory in MB allocated to the Lambda function. | `number` | `128` | no |
 | <a name="input_lambda_name"></a> [lambda\_name](#input\_lambda\_name) | The name of the Lambda function to handle AWS Organization account movements. | `string` | `"lz-tagging-compliance"` | no |
 | <a name="input_lambda_role_name"></a> [lambda\_role\_name](#input\_lambda\_role\_name) | The name of the IAM role to be created for the Lambda function. | `string` | `"lz-tagging-compliance"` | no |
-| <a name="input_lambda_runtime"></a> [lambda\_runtime](#input\_lambda\_runtime) | The runtime environment for the Lambda function. | `string` | `"python3.12"` | no |
+| <a name="input_lambda_runtime"></a> [lambda\_runtime](#input\_lambda\_runtime) | The runtime environment for the Lambda function. | `string` | `"python3.14"` | no |
 | <a name="input_lambda_timeout"></a> [lambda\_timeout](#input\_lambda\_timeout) | The timeout for the Lambda function in seconds. | `number` | `30` | no |
 | <a name="input_organizations_id"></a> [organizations\_id](#input\_organizations\_id) | AWS Organization ID to allow cross-account invocation. | `string` | `null` | no |
 | <a name="input_organizations_table_arn"></a> [organizations\_table\_arn](#input\_organizations\_table\_arn) | The ARN of the DynamoDB table to store AWS Organizations account information. | `string` | `null` | no |
