@@ -26,7 +26,7 @@ data "aws_iam_policy_document" "permissions" {
 ## Lambda function that used to handle the aws config rule
 module "lambda_function" {
   source  = "terraform-aws-modules/lambda/aws"
-  version = "8.2.0"
+  version = "8.8.0"
 
   architectures                = var.lambda_architectures
   artifacts_dir                = var.lambda_artifacts_dir
