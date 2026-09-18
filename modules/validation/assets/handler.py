@@ -93,11 +93,11 @@ class Resource:
     @classmethod
     def parse(cls, raw: Dict[str, Any]) -> "Resource":
         """Parse the AWS Config configuration item to return a Resource object."""
-        # Check for the following items
+        # Check for the following items; note 'configuration' is not required, as AWS Config
+        # sends a null configuration for deleted resources (ResourceDeleted)
         for field_name in [
             "ARN",
             "awsAccountId",
-            "configuration",
             "resourceId",
             "resourceType",
         ]:
@@ -108,10 +108,10 @@ class Resource:
 
         # Retrieve the tags from the configuration item, which are nested under the "configuration" key
         tags = {}
-        configuration = raw.get("configuration", {})
+        configuration = raw.get("configuration") or {}
 
         # We need to parse the tags from the configuration item
-        for tag in configuration.get("tags", []):
+        for tag in configuration.get("tags") or []:
             if "key" in tag and "value" in tag:
                 tags[tag["key"]] = tag["value"]
 

@@ -664,6 +664,20 @@ class TestParseConfigurationItem:
         resource = handler.Resource.parse(item)
         assert resource.Tags == {}
 
+    def test_parse_configuration_item_null_configuration(self):
+        """Test parsing when configuration is null, as sent for deleted resources."""
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::EC2::Volume",
+            "resourceId": "vol-0f750e39c7f491a40",
+            "ARN": "arn:aws:ec2:eu-west-2:123456789012:volume/vol-0f750e39c7f491a40",
+            "configuration": None,
+            "configurationItemStatus": "ResourceDeleted",
+        }
+        resource = handler.Resource.parse(item)
+        assert resource.ResourceId == "vol-0f750e39c7f491a40"
+        assert resource.Tags == {}
+
 
 class TestParseRule:
     """Tests for Rule.parse() method."""
@@ -1422,6 +1436,8 @@ class TestLambdaHandler:
         invoking_event["configurationItem"][
             "configurationItemStatus"
         ] = "ResourceDeleted"
+        # AWS Config sends a null configuration for deleted resources
+        invoking_event["configurationItem"]["configuration"] = None
         event["invokingEvent"] = json.dumps(invoking_event)
 
         mock_table_client.scan.return_value = {"Items": []}
