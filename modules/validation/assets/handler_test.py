@@ -629,7 +629,7 @@ class TestParseConfigurationItem:
         assert resource.Tags["Environment"] == "Production"
 
     def test_parse_configuration_item_no_arn(self):
-        """Test parsing fails when ARN field is missing."""
+        """Test parsing when the ARN field is absent, which AWS Config omits for deleted resources."""
         item = {
             "awsAccountId": "123456789012",
             "resourceType": "AWS::EC2::Instance",
@@ -637,8 +637,24 @@ class TestParseConfigurationItem:
             # Missing ARN
             "configuration": {"tags": []},
         }
-        with pytest.raises(ValueError, match="missing required field"):
-            handler.Resource.parse(item)
+        resource = handler.Resource.parse(item)
+        assert resource.ARN == ""
+        assert resource.ResourceId == "i-0abcd1234"
+
+    def test_parse_configuration_item_null_arn(self):
+        """Test parsing when ARN is null, as sent for deleted resources."""
+        item = {
+            "awsAccountId": "291216788061",
+            "resourceType": "AWS::Lambda::Function",
+            "resourceId": "lz-instance-scheduler-spo-CustomResourceProviderfr-jwodNK5Is0OC",
+            "ARN": None,
+            "configuration": None,
+            "configurationItemStatus": "ResourceDeleted",
+        }
+        resource = handler.Resource.parse(item)
+        assert resource.ARN == ""
+        assert resource.ResourceType == "AWS::Lambda::Function"
+        assert resource.Tags == {}
 
     def test_parse_configuration_item_missing_field(self):
         """Test parsing fails when required field is missing."""
@@ -1437,6 +1453,39 @@ class TestLambdaHandler:
             "configurationItemStatus"
         ] = "ResourceDeleted"
         # AWS Config sends a null configuration for deleted resources
+        invoking_event["configurationItem"]["configuration"] = None
+        event["invokingEvent"] = json.dumps(invoking_event)
+
+        mock_table_client.scan.return_value = {"Items": []}
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(event, None)
+
+        # Verify put_evaluations was called with NOT_APPLICABLE status
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        evaluation = call_args["Evaluations"][0]
+        assert evaluation["ComplianceType"] == handler.COMPLIANCE_TYPE_NOT_APPLICABLE
+
+    @patch.dict(
+        os.environ,
+        {
+            "ACCOUNT_ID": "123456789012",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+        },
+    )
+    @patch("handler.config_client")
+    @patch("handler.table_client")
+    def test_lambda_handler_deleted_resource_null_arn(
+        self, mock_table_client, mock_config_client, sample_config_event
+    ):
+        """Test lambda handler with a deleted resource whose ARN is null."""
+        # AWS Config sends a null ARN and configuration once the resource is gone
+        event = sample_config_event.copy()
+        invoking_event = json.loads(event["invokingEvent"])
+        invoking_event["configurationItem"][
+            "configurationItemStatus"
+        ] = "ResourceDeleted"
+        invoking_event["configurationItem"]["ARN"] = None
         invoking_event["configurationItem"]["configuration"] = None
         event["invokingEvent"] = json.dumps(invoking_event)
 

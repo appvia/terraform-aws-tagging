@@ -93,10 +93,11 @@ class Resource:
     @classmethod
     def parse(cls, raw: Dict[str, Any]) -> "Resource":
         """Parse the AWS Config configuration item to return a Resource object."""
-        # Check for the following items; note 'configuration' is not required, as AWS Config
-        # sends a null configuration for deleted resources (ResourceDeleted)
+        # Check for the following items; note neither 'configuration' nor 'ARN' are
+        # required, as AWS Config sends both as null for deleted resources
+        # (ResourceDeleted). The ARN is only used for logging and ARN based
+        # exclusions, so an empty value is safe to evaluate against.
         for field_name in [
-            "ARN",
             "awsAccountId",
             "resourceId",
             "resourceType",
@@ -117,7 +118,7 @@ class Resource:
 
         return cls(
             AccountId=raw.get("awsAccountId", None),
-            ARN=raw.get("ARN", None),
+            ARN=raw.get("ARN") or "",
             ResourceType=raw.get("resourceType", None),
             ResourceId=raw.get("resourceId", None),
             Tags=tags,
