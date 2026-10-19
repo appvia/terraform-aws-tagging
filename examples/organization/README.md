@@ -2,26 +2,26 @@
 
 ## Description
 
-This example demonstrates deployment of the tagging compliance framework with AWS Organizations integration enabled. It creates both the compliance rules table and an organizations metadata table, plus provisions a Lambda function to automatically synchronize AWS account organizational structure.
+This example demonstrates deployment of the tagging compliance framework with AWS Organizations integration enabled. It creates an S3 bucket with the YAML tagging policy, resource type mappings, and account inventory, plus provisions organization-wide conformance pack deployment and a Lambda function to automatically synchronize AWS account organizational structure.
 
-This example is ideal for enterprise deployments where you want to scope tagging rules based on organizational unit (OU) paths within your AWS Organization.
+This example is ideal for enterprise deployments where you want to scope tagging rules based on organizational unit (OU) paths, account IDs, or account tags within your AWS Organization.
 
 ## What This Example Creates
 
-- **DynamoDB Table (Compliance)**: A table named `tagging-compliance` with:
-  - `PAY_PER_REQUEST` billing mode (no capacity planning required)
-  - `ResourceType` and `RuleId` as composite key
+- **S3 Bucket (Policy Repository)**: A bucket named `tagging-compliance-org` with:
+  - YAML tagging policy with organizational rules
+  - Resource type mappings (Terraform to AWS Config types)
+  - Account inventory with tags (written by organizations Lambda)
   - Organization-wide read access policy
-  - Encryption at rest using AWS-managed keys
+  - Versioning enabled
+  - Encryption at rest (AES256 or KMS)
 
-- **DynamoDB Table (Organizations)**: A table named `organizational-accounts` with:
-  - Stores account ID, OU path, and metadata for all accounts in the organization
-  - `PAY_PER_REQUEST` billing mode
-  - `AccountId` as the hash key
-  - Organization-wide read access policy
+- **Organizations Lambda**: Automatically syncs AWS Organizations account structure and tags to S3 as `accounts.yaml`
+  - Triggers on account create, close, move, tag changes (via EventBridge in us-east-1)
+  - Daily scheduled sync
+  - Re-puts conformance pack to trigger re-evaluation when inventory changes
 
-- **Lambda Function (Organizations Handler)**: Automatically syncs AWS Organizations account structure to DynamoDB
-- **Compliance Rules**: Example EC2 and S3 tagging rules stored in DynamoDB
+- **Organization Conformance Pack**: Deploys Config rules to all accounts in the organization
 
 ## Usage
 
@@ -40,36 +40,37 @@ terraform apply
 
 - Terraform >= 1.0
 - AWS CLI configured with appropriate credentials
-- Permissions to create DynamoDB tables and resource policies
+- AWS Organizations management account or delegated administrator
+- Permissions to create S3 buckets, Lambda functions, organization conformance packs
 
 ## When to Use This Example
 
 Use this organizations example when:
 - You have an AWS Organization with multiple accounts
-- You want to scope tagging rules based on organizational unit (OU) paths
-- You need to track which account belongs to which OU for compliance reporting
-- You want rules to automatically apply based on an account's position in the organization hierarchy
+- You want to scope tagging rules based on organizational unit (OU) paths, account IDs, or account tags
+- You need automatic re-evaluation when accounts move between OUs or account tags change
+- You want organization-wide deployment via conformance packs
 - You're deploying in an enterprise environment with structured account management
 
 ## Next Steps
 
 After deploying this example:
 
-1. **Add Compliance Rules**: Use the `modules/compliance` module to populate the table with tagging rules
-2. **Deploy Lambda Evaluator**: Use the `modules/validation` module to create the Lambda function that evaluates resources
-3. **Create Config Rules**: Use the `modules/config` module to set up AWS Config rules in each account
-4. **Or Use Conformance Packs**: Use the `modules/pack` module for organization-wide deployment
-
-See the `compliance` example for a more complete setup with rules.
+1. **Bootstrap**: On first apply, `inventory_version = "none"` and conformance pack references are commented out (see inline comments)
+2. **Second Apply**: After first apply succeeds, uncomment the conformance pack references in the organizations block to enable automatic re-evaluation
+3. **Update Policy**: Edit `tagging-policy.yaml` and run `terraform apply` - changes trigger org-wide re-evaluation
+4. **Monitor**: Use AWS Config console to view compliance status across all accounts
 
 ## Key Features
 
 This example demonstrates:
 
-1. **Organizational Unit Path Scoping**: Rules can target specific OUs (e.g., `/root/workloads/production`)
-2. **Automatic Account Discovery**: Lambda function periodically syncs account structure
-3. **Centralized Governance**: Single source of truth for both rules and organizational structure
-4. **Account Metadata**: Track which accounts belong to which OUs for reporting and automation
+1. **Organizational Path Filtering**: Rules can target specific OUs (e.g., `root/Production` matches that OU and children)
+2. **Account ID Filtering**: Rules can target specific accounts by ID
+3. **Account Tag Filtering**: Rules can filter based on account-level tags (e.g., `Billable: "true"`)
+4. **Mixed Resource Types**: Combine Terraform names (`aws_s3_bucket`) and AWS Config types (`AWS::DynamoDB::Table`) in one rule
+5. **Automatic Re-evaluation**: Policy, mappings, and inventory changes trigger org-wide re-evaluation
+6. **Account Inventory**: Lambda syncs account structure and tags to S3 on events and daily schedule
 
 ## Customization
 
@@ -78,50 +79,54 @@ To customize this example:
 ```hcl
 data "aws_organizations_organization" "current" {}
 
-module "compliance" {
+module "tagging" {
   source = "../../"
+
+  # Your YAML policy file
+  policy = file("${path.module}/tagging-policy.yaml")
+
+  # S3 bucket configuration
+  bucket = {
+    name        = "my-tagging-compliance"
+    kms_key_arn = aws_kms_key.policy.arn  # Optional: use customer-managed key
+  }
 
   # Enable AWS Organizations integration
   enable_organizations = true
   organizations_id     = data.aws_organizations_organization.current.id
 
-  # Configure the compliance DynamoDB table
-  compliance = {
-    table = {
-      name         = "my-tagging-compliance"
-      billing_mode = "PAY_PER_REQUEST"
-    }
-  }
-
-  # Configure the organizations DynamoDB table and Lambda
+  # Configure the organizations Lambda
   organizations = {
-    table = {
-      name = "my-org-accounts"
-    }
+    conformance_pack_name         = "my-tagging-pack"
+    conformance_pack_template_uri = module.pack.s3_template_uri
+    enable_account_event_sync     = true
     lambda = {
-      name        = "org-account-sync"
-      description = "Syncs AWS Organizations account structure"
-      log_level   = "INFO"
-      timeout     = 60
+      name      = "my-org-inventory"
+      log_level = "INFO"
     }
   }
-
-  # Add your own compliance rules
-  rules = [
-    {
-      RuleId              = "prod-cost-center"
-      ResourceType        = "AWS::*"
-      Tag                 = "CostCenter"
-      Required            = true
-      ValuePattern        = "^CC-[0-9]{4}$"
-      OrganizationalPaths = ["/root/workloads/production"]  # Only prod OU
-    }
-  ]
 
   tags = {
     Environment = "management"
     ManagedBy   = "terraform"
   }
+}
+
+module "pack" {
+  source = "../../modules/pack"
+
+  policy_bucket_name = module.tagging.bucket_name
+  policy_bucket_arn  = module.tagging.bucket_arn
+  policy_key         = module.tagging.policy_key
+  policy_version     = module.tagging.policy_version
+  mappings_key       = module.tagging.mappings_key
+  mappings_version   = module.tagging.mappings_version
+  accounts_key       = module.tagging.accounts_key
+  kms_key_arn        = module.tagging.kms_key_arn
+
+  s3_bucket_name           = "my-pack-templates"
+  conformance_pack_name    = "my-tagging-pack"
+  deploy_organization_wide = true
 }
 ```
 
@@ -133,7 +138,7 @@ To destroy all resources created by this example:
 terraform destroy
 ```
 
-**Warning**: This will delete the DynamoDB table and all compliance rules stored in it.
+**Warning**: This will delete the S3 bucket, all policy versions, and the account inventory.
 
 <!-- BEGIN_TF_DOCS -->
 ## Providers
@@ -150,6 +155,8 @@ No inputs.
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_dynamodb_table_arn"></a> [dynamodb\_table\_arn](#output\_dynamodb\_table\_arn) | The ARN of the DynamoDB table used for tagging compliance. |
-| <a name="output_organizations_table_arn"></a> [organizations\_table\_arn](#output\_organizations\_table\_arn) | The ARN of the DynamoDB table used for storing organization metadata. |
+| <a name="output_bucket_arn"></a> [bucket\_arn](#output\_bucket\_arn) | The ARN of the S3 bucket holding the tagging policy |
+| <a name="output_bucket_name"></a> [bucket\_name](#output\_bucket\_name) | The name of the S3 bucket holding the tagging policy |
+| <a name="output_conformance_pack_name"></a> [conformance\_pack\_name](#output\_conformance\_pack\_name) | The name of the organization conformance pack |
+| <a name="output_policy_key"></a> [policy\_key](#output\_policy\_key) | The S3 object key of the tagging policy |
 <!-- END_TF_DOCS -->
