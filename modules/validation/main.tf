@@ -2,17 +2,30 @@
 ## Craft a custom policy for the lambda function
 data "aws_iam_policy_document" "permissions" {
   statement {
-    sid    = "AllowDynamoDB"
-    effect = "Allow"
-    actions = [
-      "dynamodb:Get*",
-      "dynamodb:Query",
-      "dynamodb:Scan",
-    ]
-    resources = compact([
-      var.compliance_rule_table_arn,
-      var.organizations_table_arn
-    ])
+    sid       = "AllowPolicyRead"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = [for key in local.object_keys : format("%s/%s", var.policy_bucket_arn, key)]
+  }
+
+  ## Without s3:ListBucket a missing object (e.g. the inventory before the first sync)
+  ## returns AccessDenied rather than NoSuchKey
+  statement {
+    sid       = "AllowPolicyBucketList"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [var.policy_bucket_arn]
+  }
+
+  dynamic "statement" {
+    for_each = var.kms_key_arn != null ? [1] : []
+
+    content {
+      sid       = "AllowPolicyDecrypt"
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
+      resources = [var.kms_key_arn]
+    }
   }
 
   statement {
@@ -28,16 +41,22 @@ module "lambda_function" {
   source  = "terraform-aws-modules/lambda/aws"
   version = "8.9.0"
 
-  architectures                = var.lambda_architectures
-  artifacts_dir                = var.lambda_artifacts_dir
-  function_name                = var.lambda_name
-  function_tags                = var.tags
-  description                  = var.lambda_description
-  handler                      = "handler.lambda_handler"
-  hash_extra                   = "tagging_compliance"
-  memory_size                  = var.lambda_memory_size
-  runtime                      = var.lambda_runtime
-  source_path                  = "${path.module}/assets/handler.py"
+  architectures = var.lambda_architectures
+  artifacts_dir = var.lambda_artifacts_dir
+  function_name = var.lambda_name
+  function_tags = var.tags
+  description   = var.lambda_description
+  handler       = "handler.lambda_handler"
+  hash_extra    = "tagging_compliance"
+  memory_size   = var.lambda_memory_size
+  runtime       = var.lambda_runtime
+  source_path = [
+    {
+      path             = "${path.module}/assets"
+      pip_requirements = true
+      patterns         = ["!.*_test\\.py", "!testdata/.*", "!__pycache__/.*"]
+    }
+  ]
   tags                         = merge(var.tags, { "Name" = var.lambda_name })
   timeout                      = var.lambda_timeout
   trigger_on_package_timestamp = false
@@ -45,18 +64,16 @@ module "lambda_function" {
   ## Environment variables for the Lambda function
   environment_variables = merge(
     {
-      ACCOUNT_ID              = local.account_id
-      ENABLE_ORGANIZATIONS    = var.organizations_table_arn != null ? "true" : "false"
       LOG_LEVEL               = var.lambda_log_level
+      MAPPINGS_KEY            = var.mappings_key
+      POLICY_BUCKET           = var.policy_bucket_name
+      POLICY_KEY              = var.policy_key
       RULES_CACHE_ENABLED     = var.rules_cache_enabled ? "true" : "false"
       RULES_CACHE_TTL_SECONDS = tostring(var.rules_cache_ttl_seconds)
     },
-    var.compliance_rule_table_arn != null ? {
-      TABLE_ARN_RULES = var.compliance_rule_table_arn
-    } : null,
-    var.organizations_table_arn != null ? {
-      TABLE_ARN_ORGANIZATIONS = var.organizations_table_arn,
-    } : null,
+    var.accounts_key != null ? {
+      ACCOUNTS_KEY = var.accounts_key
+    } : {},
   )
 
   ## Lambda Role

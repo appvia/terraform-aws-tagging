@@ -4,6 +4,22 @@ variable "account_event_rule_name" {
   default     = "organizations-account-inventory-account-events"
 }
 
+variable "accounts_key" {
+  description = "The object key of the account inventory (YAML) written to the bucket."
+  type        = string
+  default     = "accounts.yaml"
+}
+
+variable "bucket_arn" {
+  description = "The ARN of the S3 bucket the account inventory is written to."
+  type        = string
+}
+
+variable "bucket_name" {
+  description = "The name of the S3 bucket the account inventory is written to."
+  type        = string
+}
+
 variable "cloudwatch_logs_kms_key_id" {
   description = "The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted."
   type        = string
@@ -22,11 +38,6 @@ variable "cloudwatch_logs_retention_in_days" {
   default     = 7
 }
 
-variable "dynamodb_table_arn" {
-  description = "The ARN of the DynamoDB table to store AWS Organizations account information."
-  type        = string
-}
-
 variable "enable_account_event_sync" {
   description = "Enable an EventBridge rule to trigger the sync on account creation/closure events."
   type        = bool
@@ -39,10 +50,16 @@ variable "enable_scheduled_sync" {
   default     = true
 }
 
+variable "kms_key_arn" {
+  description = "The ARN of the KMS key encrypting the bucket. When set, the lambda is granted kms:Decrypt and kms:GenerateDataKey on it."
+  type        = string
+  default     = null
+}
+
 variable "lambda_description" {
   description = "The description of the Lambda function to synchronize AWS Organizations account information."
   type        = string
-  default     = "Synchronizes AWS Organizations account information to DynamoDB."
+  default     = "Synchronizes AWS Organizations account information to S3."
 }
 
 variable "lambda_log_level" {

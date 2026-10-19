@@ -3,10 +3,11 @@
 module "lambda_function" {
   source = "../validation"
 
+  accounts_key                      = var.accounts_key
   cloudwatch_logs_kms_key_id        = var.cloudwatch_logs_kms_key_id
   cloudwatch_logs_log_group_class   = var.cloudwatch_logs_log_group_class
   cloudwatch_logs_retention_in_days = var.cloudwatch_logs_retention_in_days
-  compliance_rule_table_arn         = var.compliance_rule_table_arn
+  kms_key_arn                       = var.kms_key_arn
   lambda_architectures              = var.lambda_architectures
   lambda_artifacts_dir              = var.lambda_artifacts_dir
   lambda_create_role                = var.lambda_create_role
@@ -17,7 +18,10 @@ module "lambda_function" {
   lambda_role_name                  = var.lambda_role_name
   lambda_runtime                    = var.lambda_runtime
   lambda_timeout                    = var.lambda_timeout
-  organizations_table_arn           = var.organizations_table_arn
+  mappings_key                      = var.mappings_key
+  policy_bucket_arn                 = var.policy_bucket_arn
+  policy_bucket_name                = var.policy_bucket_name
+  policy_key                        = var.policy_key
   rules_cache_enabled               = var.rules_cache_enabled
   rules_cache_ttl_seconds           = var.rules_cache_ttl_seconds
   tags                              = var.tags
@@ -27,6 +31,13 @@ module "lambda_function" {
 resource "aws_config_config_rule" "tagging_compliance" {
   name        = var.config_name
   description = "Custom AWS Config rule to evaluate tagging compliance using a Lambda function."
+
+  ## The version hashes only force a re-evaluation when the policy or mappings change;
+  ## the lambda reads the policy location from its environment
+  input_parameters = jsonencode({
+    PolicyVersion   = var.policy_version
+    MappingsVersion = var.mappings_version
+  })
 
   scope {
     compliance_resource_types = var.config_resource_types

@@ -1,6 +1,7 @@
-variable "compliance_rule_table_arn" {
-  description = "ARN of the DynamoDB table containing compliance rules"
+variable "accounts_key" {
+  description = "The object key of the account inventory in the policy bucket. When null, no inventory is read and organizational_path/account_tag rules are ignored."
   type        = string
+  default     = null
 }
 
 variable "conformance_pack_name" {
@@ -46,15 +47,32 @@ variable "excluded_accounts" {
 }
 
 variable "input_parameters" {
-  description = "Map of input parameters to pass to the conformance pack"
+  description = "Map of additional input parameters to pass to the conformance pack. PolicyVersion and MappingsVersion are always set from policy_version and mappings_version; InventoryVersion is left to the template default and managed by the organizations lambda."
   type        = map(string)
   default     = {}
+}
+
+variable "kms_key_arn" {
+  description = "The ARN of the KMS key encrypting the policy bucket. When set, the lambda is granted kms:Decrypt on it."
+  type        = string
+  default     = null
 }
 
 variable "lambda_function_arn" {
   description = "ARN of the Lambda function that evaluates compliance"
   type        = string
   default     = null
+}
+
+variable "mappings_key" {
+  description = "The object key of the resource type mappings in the policy bucket."
+  type        = string
+  default     = "mappings.yaml"
+}
+
+variable "mappings_version" {
+  description = "A hash of the mappings content (root module output mappings_version), passed as the MappingsVersion pack parameter to force re-evaluation on change."
+  type        = string
 }
 
 variable "max_execution_frequency" {
@@ -77,6 +95,29 @@ variable "pack_description" {
   description = "Description of the conformance pack"
   type        = string
   default     = "AWS Config Conformance Pack for validating resource tagging compliance"
+}
+
+variable "policy_bucket_arn" {
+  description = "The ARN of the S3 bucket holding the tagging policy, mappings and inventory. Required unless lambda_function_arn is provided."
+  type        = string
+  default     = null
+}
+
+variable "policy_bucket_name" {
+  description = "The name of the S3 bucket holding the tagging policy, mappings and inventory. Required unless lambda_function_arn is provided."
+  type        = string
+  default     = null
+}
+
+variable "policy_key" {
+  description = "The object key of the tagging policy in the policy bucket."
+  type        = string
+  default     = "policy.yaml"
+}
+
+variable "policy_version" {
+  description = "A hash of the tagging policy content (root module output policy_version), passed as the PolicyVersion pack parameter to force re-evaluation on change."
+  type        = string
 }
 
 variable "resource_types" {

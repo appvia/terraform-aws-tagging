@@ -1,12 +1,13 @@
+variable "accounts_key" {
+  description = "The object key of the account inventory in the policy bucket. When null, no inventory is read and organizational_path/account_tag rules are ignored."
+  type        = string
+  default     = null
+}
+
 variable "allowed_source_accounts" {
   description = "List of AWS account IDs allowed to invoke this Lambda function. If not provided and organization_id is set, allows all accounts in the organization."
   type        = list(string)
   default     = []
-}
-
-variable "compliance_rule_table_arn" {
-  description = "The ARN of the DynamoDB table to store tags for AWS resources."
-  type        = string
 }
 
 variable "cloudwatch_logs_kms_key_id" {
@@ -25,6 +26,12 @@ variable "cloudwatch_logs_retention_in_days" {
   description = "The number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827."
   type        = number
   default     = 7
+}
+
+variable "kms_key_arn" {
+  description = "The ARN of the KMS key encrypting the policy bucket. When set, the lambda is granted kms:Decrypt on it."
+  type        = string
+  default     = null
 }
 
 variable "lambda_architectures" {
@@ -87,26 +94,42 @@ variable "lambda_timeout" {
   default     = 30
 }
 
+variable "mappings_key" {
+  description = "The object key of the resource type mappings in the policy bucket."
+  type        = string
+  default     = "mappings.yaml"
+}
+
 variable "organizations_id" {
   description = "AWS Organization ID to allow cross-account invocation."
   type        = string
   default     = null
 }
 
-variable "organizations_table_arn" {
-  description = "The ARN of the DynamoDB table to store AWS Organizations account information. "
+variable "policy_bucket_arn" {
+  description = "The ARN of the S3 bucket holding the tagging policy, mappings and inventory."
   type        = string
-  default     = null
+}
+
+variable "policy_bucket_name" {
+  description = "The name of the S3 bucket holding the tagging policy, mappings and inventory."
+  type        = string
+}
+
+variable "policy_key" {
+  description = "The object key of the tagging policy in the policy bucket."
+  type        = string
+  default     = "policy.yaml"
 }
 
 variable "rules_cache_enabled" {
-  description = "Enable or disable caching of compliance rules in Lambda function memory."
+  description = "Enable or disable caching of the policy, mappings and inventory in Lambda function memory."
   type        = bool
   default     = true
 }
 
 variable "rules_cache_ttl_seconds" {
-  description = "Time-to-live (TTL) in seconds for cached compliance rules."
+  description = "Time-to-live (TTL) in seconds for the cached policy, mappings and inventory before they are revalidated against S3."
   type        = number
   default     = 300
 }

@@ -261,14 +261,17 @@ The Lambda function requires the following IAM permissions:
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_dynamodb_table_arn"></a> [dynamodb\_table\_arn](#input\_dynamodb\_table\_arn) | The ARN of the DynamoDB table to store AWS Organizations account information. | `string` | n/a | yes |
+| <a name="input_bucket_arn"></a> [bucket\_arn](#input\_bucket\_arn) | The ARN of the S3 bucket the account inventory is written to. | `string` | n/a | yes |
+| <a name="input_bucket_name"></a> [bucket\_name](#input\_bucket\_name) | The name of the S3 bucket the account inventory is written to. | `string` | n/a | yes |
 | <a name="input_account_event_rule_name"></a> [account\_event\_rule\_name](#input\_account\_event\_rule\_name) | Name of the EventBridge rule used for account event syncs. | `string` | `"organizations-account-inventory-account-events"` | no |
+| <a name="input_accounts_key"></a> [accounts\_key](#input\_accounts\_key) | The object key of the account inventory (YAML) written to the bucket. | `string` | `"accounts.yaml"` | no |
 | <a name="input_cloudwatch_logs_kms_key_id"></a> [cloudwatch\_logs\_kms\_key\_id](#input\_cloudwatch\_logs\_kms\_key\_id) | The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted. | `string` | `null` | no |
 | <a name="input_cloudwatch_logs_log_group_class"></a> [cloudwatch\_logs\_log\_group\_class](#input\_cloudwatch\_logs\_log\_group\_class) | The log group class for CloudWatch Logs. Valid values are STANDARD and INFREQUENT\_ACCESS. | `string` | `"STANDARD"` | no |
 | <a name="input_cloudwatch_logs_retention_in_days"></a> [cloudwatch\_logs\_retention\_in\_days](#input\_cloudwatch\_logs\_retention\_in\_days) | The number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827. | `number` | `7` | no |
 | <a name="input_enable_account_event_sync"></a> [enable\_account\_event\_sync](#input\_enable\_account\_event\_sync) | Enable an EventBridge rule to trigger the sync on account creation/closure events. | `bool` | `false` | no |
 | <a name="input_enable_scheduled_sync"></a> [enable\_scheduled\_sync](#input\_enable\_scheduled\_sync) | Enable a scheduled EventBridge rule to trigger the sync periodically. | `bool` | `true` | no |
-| <a name="input_lambda_description"></a> [lambda\_description](#input\_lambda\_description) | The description of the Lambda function to synchronize AWS Organizations account information. | `string` | `"Synchronizes AWS Organizations account information to DynamoDB."` | no |
+| <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | The ARN of the KMS key encrypting the bucket. When set, the lambda is granted kms:Decrypt and kms:GenerateDataKey on it. | `string` | `null` | no |
+| <a name="input_lambda_description"></a> [lambda\_description](#input\_lambda\_description) | The description of the Lambda function to synchronize AWS Organizations account information. | `string` | `"Synchronizes AWS Organizations account information to S3."` | no |
 | <a name="input_lambda_log_level"></a> [lambda\_log\_level](#input\_lambda\_log\_level) | The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL. | `string` | `"INFO"` | no |
 | <a name="input_lambda_memory_size"></a> [lambda\_memory\_size](#input\_lambda\_memory\_size) | The amount of memory in MB allocated to the Lambda function. | `number` | `128` | no |
 | <a name="input_lambda_name"></a> [lambda\_name](#input\_lambda\_name) | The name of the Lambda function to synchronize AWS Organizations account information. | `string` | `"organizations-account-inventory"` | no |

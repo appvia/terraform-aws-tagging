@@ -1,34 +1,34 @@
-# NOTE: This test requires actual AWS credentials or a fully functional mock provider
-# The terraform-aws-modules/lambda/aws module contains nested data sources that
-# cannot be properly mocked with Terraform's current testing framework.
-# 
-# To run this test, ensure you have AWS credentials configured.
+mock_provider "aws" {
+  source = "./tests/mock"
+}
 
-# mock_provider "aws" {}
+run "basic" {
+  command = plan
 
-# run "basic" {
-#   command = plan
-#   
-#   module {
-#     source = "./modules/config"
-#   }
+  module {
+    source = "./modules/config"
+  }
 
-#   variables {
-#     dynamodb_table_arn = "arn:aws:dynamodb:eu-west-1:123456789012:table/tagging-compliance"
-#     config_resource_types = ["AWS::EC2::*"]
-#     lambda_name = "tagging-compliance-evaluator"
-#     config_name = "tagging-compliance"
-#   }
+  variables {
+    config_name           = "tagging-compliance"
+    config_resource_types = ["AWS::EC2::Instance"]
+    lambda_name           = "tagging-compliance-evaluator"
+    mappings_version      = "mappings-hash"
+    policy_bucket_arn     = "arn:aws:s3:::tagging-compliance"
+    policy_bucket_name    = "tagging-compliance"
+    policy_version        = "policy-hash"
+  }
 
-#   assert {
-#     # We should have an AWS Config rule provisioned
-#     condition = aws_config_config_rule.tagging != null
-#     error_message = "AWS Config rule was not created"
-#   }
+  assert {
+    condition     = aws_config_config_rule.tagging_compliance.name == "tagging-compliance"
+    error_message = "Config rule has incorrect name"
+  }
 
-#   assert {
-#     # Config rule should have correct name
-#     condition = aws_config_config_rule.tagging.name == "tagging-compliance"
-#     error_message = "Config rule has incorrect name"
-#   }
-# }
+  assert {
+    condition = jsondecode(aws_config_config_rule.tagging_compliance.input_parameters) == {
+      PolicyVersion   = "policy-hash"
+      MappingsVersion = "mappings-hash"
+    }
+    error_message = "Config rule input parameters must carry only the policy and mappings versions"
+  }
+}

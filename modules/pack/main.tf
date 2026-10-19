@@ -1,6 +1,23 @@
 locals {
   ## Determine the Lambda function ARN to use in the conformance pack template
-  lambda_arn = var.lambda_function_arn != null ? var.lambda_function_arn : try(module.lambda_function.lambda_arn, null)
+  lambda_arn = var.lambda_function_arn != null ? var.lambda_function_arn : try(module.lambda_function[0].lambda_arn, null)
+
+  ## The input parameters passed to the conformance pack; the version hashes force a
+  ## re-evaluation when the policy or mappings change. InventoryVersion is deliberately
+  ## left to the template default and is only set by the organizations lambda.
+  pack_input_parameters = merge(var.input_parameters, {
+    PolicyVersion   = var.policy_version
+    MappingsVersion = var.mappings_version
+  })
+
+  ## The rendered conformance pack template
+  template = templatefile("${path.module}/assets/conformance-pack.yaml.tmpl", {
+    config_rule_name        = var.config_rule_name
+    description             = var.pack_description
+    lambda_function_arn     = local.lambda_arn
+    max_execution_frequency = var.max_execution_frequency
+    resource_types          = jsonencode(var.resource_types)
+  })
 }
 
 ## Create an S3 bucket to store the conformance pack template
@@ -48,23 +65,15 @@ resource "aws_s3_object" "conformance_pack_template" {
   key          = var.s3_template_key
   tags         = var.tags
 
-  content = templatefile("${path.module}/assets/conformance-pack.yaml.tmpl", {
-    compliance_rule_table_arn = var.compliance_rule_table_arn
-    config_rule_name          = var.config_rule_name
-    description               = var.pack_description
-    lambda_function_arn       = local.lambda_arn
-    max_execution_frequency   = var.max_execution_frequency
-    resource_types            = jsonencode(var.resource_types)
-  })
+  content = local.template
+  etag    = md5(local.template)
 
-  etag = md5(templatefile("${path.module}/assets/conformance-pack.yaml.tmpl", {
-    compliance_rule_table_arn = var.compliance_rule_table_arn
-    config_rule_name          = var.config_rule_name
-    description               = var.pack_description
-    lambda_function_arn       = local.lambda_arn
-    max_execution_frequency   = var.max_execution_frequency
-    resource_types            = jsonencode(var.resource_types)
-  }))
+  lifecycle {
+    precondition {
+      condition     = var.lambda_function_arn != null || (var.policy_bucket_name != null && var.policy_bucket_arn != null)
+      error_message = "policy_bucket_name and policy_bucket_arn are required when lambda_function_arn is not provided."
+    }
+  }
 }
 
 ## Provision the custom lambda function which can be shared across multiple
@@ -73,13 +82,18 @@ module "lambda_function" {
   count  = var.lambda_function_arn == null ? 1 : 0
   source = "../validation"
 
-  compliance_rule_table_arn         = var.compliance_rule_table_arn
+  accounts_key                      = var.accounts_key
   cloudwatch_logs_kms_key_id        = var.cloudwatch_logs_kms_key_id
   cloudwatch_logs_log_group_class   = var.cloudwatch_logs_log_group_class
   cloudwatch_logs_retention_in_days = var.cloudwatch_logs_retention_in_days
+  kms_key_arn                       = var.kms_key_arn
   lambda_description                = format("Lambda function to evaluate tagging compliance for conformance pack %s", var.conformance_pack_name)
   lambda_name                       = "${var.config_rule_name}-compliance-tagging"
   lambda_role_name                  = "${var.config_rule_name}-compliance-tagging"
+  mappings_key                      = var.mappings_key
+  policy_bucket_arn                 = var.policy_bucket_arn
+  policy_bucket_name                = var.policy_bucket_name
+  policy_key                        = var.policy_key
   tags                              = var.tags
 }
 
@@ -92,7 +106,7 @@ resource "aws_config_organization_conformance_pack" "tagging" {
   template_s3_uri   = format("s3://%s/%s", aws_s3_bucket.conformance_pack.id, aws_s3_object.conformance_pack_template.key)
 
   dynamic "input_parameter" {
-    for_each = var.input_parameters
+    for_each = local.pack_input_parameters
 
     content {
       parameter_name  = input_parameter.key
@@ -114,7 +128,7 @@ resource "aws_config_conformance_pack" "tagging" {
   template_s3_uri = format("s3://%s/%s", aws_s3_bucket.conformance_pack.id, aws_s3_object.conformance_pack_template.key)
 
   dynamic "input_parameter" {
-    for_each = var.input_parameters
+    for_each = local.pack_input_parameters
 
     content {
       parameter_name  = input_parameter.key

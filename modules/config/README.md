@@ -349,20 +349,25 @@ View compliance status directly in the AWS Config console:
 ## Providers
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0.0 |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
-| <a name="input_compliance_rule_table_arn"></a> [compliance\_rule\_table\_arn](#input\_compliance\_rule\_table\_arn) | The ARN of the DynamoDB table to store tags for AWS resources. | `string` | n/a | yes |
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_config_resource_types"></a> [config\_resource\_types](#input\_config\_resource\_types) | List of AWS resource types to evaluate (https://docs.aws.amazon.com/config/latest/developerguide/resource-config-reference.html) | `list(string)` | n/a | yes |
+| <a name="input_mappings_version"></a> [mappings\_version](#input\_mappings\_version) | A hash of the mappings content (root module output mappings\_version). Changing it forces AWS Config to re-evaluate all resources. | `string` | n/a | yes |
+| <a name="input_policy_bucket_arn"></a> [policy\_bucket\_arn](#input\_policy\_bucket\_arn) | The ARN of the S3 bucket holding the tagging policy, mappings and inventory. | `string` | n/a | yes |
+| <a name="input_policy_bucket_name"></a> [policy\_bucket\_name](#input\_policy\_bucket\_name) | The name of the S3 bucket holding the tagging policy, mappings and inventory. | `string` | n/a | yes |
+| <a name="input_policy_version"></a> [policy\_version](#input\_policy\_version) | A hash of the tagging policy content (root module output policy\_version). Changing it forces AWS Config to re-evaluate all resources. | `string` | n/a | yes |
+| <a name="input_accounts_key"></a> [accounts\_key](#input\_accounts\_key) | The object key of the account inventory in the policy bucket. When null, no inventory is read and organizational\_path/account\_tag rules are ignored. | `string` | `null` | no |
 | <a name="input_cloudwatch_logs_kms_key_id"></a> [cloudwatch\_logs\_kms\_key\_id](#input\_cloudwatch\_logs\_kms\_key\_id) | The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted. | `string` | `null` | no |
 | <a name="input_cloudwatch_logs_log_group_class"></a> [cloudwatch\_logs\_log\_group\_class](#input\_cloudwatch\_logs\_log\_group\_class) | The log group class for CloudWatch Logs. Valid values are STANDARD and INFREQUENT\_ACCESS. | `string` | `"STANDARD"` | no |
 | <a name="input_cloudwatch_logs_retention_in_days"></a> [cloudwatch\_logs\_retention\_in\_days](#input\_cloudwatch\_logs\_retention\_in\_days) | The number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827. | `number` | `7` | no |
 | <a name="input_config_name"></a> [config\_name](#input\_config\_name) | The name of the AWS Config rule | `string` | `"tagging-compliance"` | no |
 | <a name="input_configuration_item_change_enabled"></a> [configuration\_item\_change\_enabled](#input\_configuration\_item\_change\_enabled) | When true, the rule is invoked when AWS Config records a configuration change (including oversized configuration notifications) for resources in scope. Set to false and enable periodic\_evaluation\_enabled to run only on a schedule. | `bool` | `true` | no |
+| <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | The ARN of the KMS key encrypting the policy bucket. When set, the lambda is granted kms:Decrypt on it. | `string` | `null` | no |
 | <a name="input_lambda_architectures"></a> [lambda\_architectures](#input\_lambda\_architectures) | The lambda architecture to use. Valid values are x86\_64 and arm64. | `list(string)` | <pre>[<br/>  "arm64"<br/>]</pre> | no |
 | <a name="input_lambda_artifacts_dir"></a> [lambda\_artifacts\_dir](#input\_lambda\_artifacts\_dir) | The directory to store any generated artifacts for the lambda | `string` | `"builds"` | no |
 | <a name="input_lambda_create_role"></a> [lambda\_create\_role](#input\_lambda\_create\_role) | Indicates we should create the role | `bool` | `true` | no |
@@ -373,17 +378,18 @@ View compliance status directly in the AWS Config console:
 | <a name="input_lambda_role_name"></a> [lambda\_role\_name](#input\_lambda\_role\_name) | The name of the IAM role to be created for the Lambda function. | `string` | `"lz-tagging-compliance"` | no |
 | <a name="input_lambda_runtime"></a> [lambda\_runtime](#input\_lambda\_runtime) | The runtime environment for the Lambda function. | `string` | `"python3.14"` | no |
 | <a name="input_lambda_timeout"></a> [lambda\_timeout](#input\_lambda\_timeout) | The timeout for the Lambda function in seconds. | `number` | `30` | no |
+| <a name="input_mappings_key"></a> [mappings\_key](#input\_mappings\_key) | The object key of the resource type mappings in the policy bucket. | `string` | `"mappings.yaml"` | no |
 | <a name="input_maximum_execution_frequency"></a> [maximum\_execution\_frequency](#input\_maximum\_execution\_frequency) | Maximum interval between periodic evaluations when periodic\_evaluation\_enabled is true. Values: One\_Hour, Three\_Hours, Six\_Hours, Twelve\_Hours, TwentyFour\_Hours. | `string` | `"TwentyFour_Hours"` | no |
-| <a name="input_organizations_table_arn"></a> [organizations\_table\_arn](#input\_organizations\_table\_arn) | The ARN of the DynamoDB table to store AWS Organizations account information. | `string` | `null` | no |
 | <a name="input_periodic_evaluation_enabled"></a> [periodic\_evaluation\_enabled](#input\_periodic\_evaluation\_enabled) | When true, AWS Config also invokes the rule on a recurring schedule; use maximum\_execution\_frequency to set how often. Combine with configuration\_item\_change\_enabled for both change-driven and scheduled evaluations. | `bool` | `false` | no |
-| <a name="input_rules_cache_enabled"></a> [rules\_cache\_enabled](#input\_rules\_cache\_enabled) | Enable or disable caching of compliance rules in Lambda function memory. When enabled, rules are cached between invocations to reduce DynamoDB read costs and improve performance. | `bool` | `true` | no |
-| <a name="input_rules_cache_ttl_seconds"></a> [rules\_cache\_ttl\_seconds](#input\_rules\_cache\_ttl\_seconds) | Time-to-live (TTL) in seconds for cached compliance rules. After this period, the cache expires and rules are re-fetched from DynamoDB. Default is 300 seconds (5 minutes). | `number` | `300` | no |
+| <a name="input_policy_key"></a> [policy\_key](#input\_policy\_key) | The object key of the tagging policy in the policy bucket. | `string` | `"policy.yaml"` | no |
+| <a name="input_rules_cache_enabled"></a> [rules\_cache\_enabled](#input\_rules\_cache\_enabled) | Enable or disable caching of compliance rules in Lambda function memory. When enabled, the policy, mappings and inventory are cached between invocations to reduce S3 reads and improve performance. | `bool` | `true` | no |
+| <a name="input_rules_cache_ttl_seconds"></a> [rules\_cache\_ttl\_seconds](#input\_rules\_cache\_ttl\_seconds) | Time-to-live (TTL) in seconds for the cached policy, mappings and inventory. After this period, the cached objects are revalidated against S3. Default is 300 seconds (5 minutes). | `number` | `300` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to the Lambda function. | `map(string)` | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_config_arn"></a> [config\_arn](#output\_config\_arn) | The ARN of the AWS Config rule for tagging compliance. |
 | <a name="output_lambda_arn"></a> [lambda\_arn](#output\_lambda\_arn) | The ARN of the Lambda function for tagging compliance. |
 <!-- END_TF_DOCS -->

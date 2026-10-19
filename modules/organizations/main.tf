@@ -2,16 +2,29 @@
 ## Craft a custom policy for the lambda function
 data "aws_iam_policy_document" "permissions" {
   statement {
-    sid    = "AllowDynamoDB"
+    sid    = "AllowInventoryReadWrite"
     effect = "Allow"
     actions = [
-      "dynamodb:Get*",
-      "dynamodb:Put*",
-      "dynamodb:Scan*",
+      "s3:GetObject",
+      "s3:PutObject",
     ]
     resources = [
-      var.dynamodb_table_arn
+      format("%s/%s", var.bucket_arn, var.accounts_key),
     ]
+  }
+
+  dynamic "statement" {
+    for_each = var.kms_key_arn != null ? [1] : []
+
+    content {
+      sid    = "AllowInventoryEncryption"
+      effect = "Allow"
+      actions = [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+      ]
+      resources = [var.kms_key_arn]
+    }
   }
 
   statement {
@@ -30,22 +43,29 @@ module "lambda_function" {
   source  = "terraform-aws-modules/lambda/aws"
   version = "8.9.0"
 
-  function_name                = var.lambda_name
-  function_tags                = var.tags
-  description                  = var.lambda_description
-  handler                      = "handler.lambda_handler"
-  hash_extra                   = var.lambda_name
-  memory_size                  = var.lambda_memory_size
-  runtime                      = var.lambda_runtime
-  source_path                  = "${path.module}/assets/handler.py"
+  function_name = var.lambda_name
+  function_tags = var.tags
+  description   = var.lambda_description
+  handler       = "handler.lambda_handler"
+  hash_extra    = var.lambda_name
+  memory_size   = var.lambda_memory_size
+  runtime       = var.lambda_runtime
+  source_path = [
+    {
+      path             = "${path.module}/assets"
+      pip_requirements = true
+      patterns         = ["!.*_test\\.py", "!testdata/.*", "!__pycache__/.*"]
+    }
+  ]
   tags                         = merge(var.tags, { "Name" = var.lambda_name })
   timeout                      = var.lambda_timeout
   trigger_on_package_timestamp = false
 
   ## Environment variables for the Lambda function
   environment_variables = {
-    DYNAMODB_TABLE_ARN = var.dynamodb_table_arn
-    LOG_LEVEL          = var.lambda_log_level
+    ACCOUNTS_KEY = var.accounts_key
+    BUCKET_NAME  = var.bucket_name
+    LOG_LEVEL    = var.lambda_log_level
   }
 
   ## Lambda Role

@@ -209,9 +209,11 @@ The module generates a CloudFormation-compatible conformance pack template that 
 - AWS Config custom rule referencing your Lambda function
 - Scope configuration for resource types
 - Event triggers for configuration changes and scheduled evaluations
-- Input parameters for DynamoDB table ARN
+- Pack parameters `PolicyVersion`, `MappingsVersion` and `InventoryVersion` (type String, default `none`), passed to the rule's `InputParameters`
 
 The template is stored in S3 and can be versioned for change tracking.
+
+The version parameters carry content hashes only; the Lambda reads the policy location from its environment. Changing any of them updates the rule and makes AWS Config re-evaluate every in-scope resource. The module sets `PolicyVersion` and `MappingsVersion` (from the root module's `policy_version` and `mappings_version` outputs). `InventoryVersion` keeps the template default and is set only by the organizations Lambda when the account inventory changes. A later `terraform apply` that resets it to `none` does no harm: it just triggers one more re-evaluation.
 
 ## Deployment Strategies
 
@@ -403,8 +405,10 @@ The `terraform-docs` utility is used to generate documentation. Follow these ste
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_compliance_rule_table_arn"></a> [compliance\_rule\_table\_arn](#input\_compliance\_rule\_table\_arn) | ARN of the DynamoDB table containing compliance rules | `string` | n/a | yes |
+| <a name="input_mappings_version"></a> [mappings\_version](#input\_mappings\_version) | A hash of the mappings content (root module output mappings\_version), passed as the MappingsVersion pack parameter to force re-evaluation on change. | `string` | n/a | yes |
+| <a name="input_policy_version"></a> [policy\_version](#input\_policy\_version) | A hash of the tagging policy content (root module output policy\_version), passed as the PolicyVersion pack parameter to force re-evaluation on change. | `string` | n/a | yes |
 | <a name="input_s3_bucket_name"></a> [s3\_bucket\_name](#input\_s3\_bucket\_name) | Name of the S3 bucket to store the conformance pack template | `string` | n/a | yes |
+| <a name="input_accounts_key"></a> [accounts\_key](#input\_accounts\_key) | The object key of the account inventory in the policy bucket. When null, no inventory is read and organizational\_path/account\_tag rules are ignored. | `string` | `null` | no |
 | <a name="input_cloudwatch_logs_kms_key_id"></a> [cloudwatch\_logs\_kms\_key\_id](#input\_cloudwatch\_logs\_kms\_key\_id) | KMS key ID for encrypting CloudWatch Logs (optional) | `string` | `null` | no |
 | <a name="input_cloudwatch_logs_log_group_class"></a> [cloudwatch\_logs\_log\_group\_class](#input\_cloudwatch\_logs\_log\_group\_class) | Log group class for CloudWatch Logs. Valid values are STANDARD and INFREQUENT\_ACCESS. | `string` | `"STANDARD"` | no |
 | <a name="input_cloudwatch_logs_retention_in_days"></a> [cloudwatch\_logs\_retention\_in\_days](#input\_cloudwatch\_logs\_retention\_in\_days) | Number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827. | `number` | `7` | no |
@@ -412,10 +416,15 @@ The `terraform-docs` utility is used to generate documentation. Follow these ste
 | <a name="input_conformance_pack_name"></a> [conformance\_pack\_name](#input\_conformance\_pack\_name) | Name of the AWS Config Conformance Pack | `string` | `"tagging-compliance"` | no |
 | <a name="input_deploy_organization_wide"></a> [deploy\_organization\_wide](#input\_deploy\_organization\_wide) | Whether to deploy the conformance pack organization-wide (requires Organizations management account) | `bool` | `false` | no |
 | <a name="input_excluded_accounts"></a> [excluded\_accounts](#input\_excluded\_accounts) | List of AWS account IDs to exclude from organization conformance pack deployment | `list(string)` | `[]` | no |
-| <a name="input_input_parameters"></a> [input\_parameters](#input\_input\_parameters) | Map of input parameters to pass to the conformance pack | `map(string)` | `{}` | no |
+| <a name="input_input_parameters"></a> [input\_parameters](#input\_input\_parameters) | Map of additional input parameters to pass to the conformance pack. PolicyVersion and MappingsVersion are always set from policy\_version and mappings\_version; InventoryVersion is left to the template default and managed by the organizations lambda. | `map(string)` | `{}` | no |
+| <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | The ARN of the KMS key encrypting the policy bucket. When set, the lambda is granted kms:Decrypt on it. | `string` | `null` | no |
 | <a name="input_lambda_function_arn"></a> [lambda\_function\_arn](#input\_lambda\_function\_arn) | ARN of the Lambda function that evaluates compliance | `string` | `null` | no |
+| <a name="input_mappings_key"></a> [mappings\_key](#input\_mappings\_key) | The object key of the resource type mappings in the policy bucket. | `string` | `"mappings.yaml"` | no |
 | <a name="input_max_execution_frequency"></a> [max\_execution\_frequency](#input\_max\_execution\_frequency) | Maximum frequency for Config rule evaluation | `string` | `"TwentyFour_Hours"` | no |
 | <a name="input_pack_description"></a> [pack\_description](#input\_pack\_description) | Description of the conformance pack | `string` | `"AWS Config Conformance Pack for validating resource tagging compliance"` | no |
+| <a name="input_policy_bucket_arn"></a> [policy\_bucket\_arn](#input\_policy\_bucket\_arn) | The ARN of the S3 bucket holding the tagging policy, mappings and inventory. Required unless lambda\_function\_arn is provided. | `string` | `null` | no |
+| <a name="input_policy_bucket_name"></a> [policy\_bucket\_name](#input\_policy\_bucket\_name) | The name of the S3 bucket holding the tagging policy, mappings and inventory. Required unless lambda\_function\_arn is provided. | `string` | `null` | no |
+| <a name="input_policy_key"></a> [policy\_key](#input\_policy\_key) | The object key of the tagging policy in the policy bucket. | `string` | `"policy.yaml"` | no |
 | <a name="input_resource_types"></a> [resource\_types](#input\_resource\_types) | List of AWS resource types to evaluate (e.g., AWS::EC2::Instance) | `list(string)` | <pre>[<br/>  "AWS::*"<br/>]</pre> | no |
 | <a name="input_s3_enable_versioning"></a> [s3\_enable\_versioning](#input\_s3\_enable\_versioning) | Enable versioning for the S3 bucket | `bool` | `true` | no |
 | <a name="input_s3_kms_key_id"></a> [s3\_kms\_key\_id](#input\_s3\_kms\_key\_id) | KMS key ID for S3 bucket encryption (optional) | `string` | `null` | no |
