@@ -364,3 +364,9 @@ def test_aws_and_terraform_types_accepted_together():
         "aws_s3_bucket",
         "AWS::DynamoDB::Table",
     )
+
+
+@pytest.mark.parametrize("value", ["/", "//", ["root/a", "/"]])
+def test_organizational_path_empty_after_strip_rejected(value):
+    with pytest.raises(PolicyError, match="organizational_path"):
+        _cond({"organizational_path": value})

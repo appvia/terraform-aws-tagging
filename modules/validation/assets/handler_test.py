@@ -751,6 +751,136 @@ class TestValidateEnvironment:
 # ============================================================================
 
 
+_WARNING_POLICY = """
+version: 1
+exclude_resource_types: [aws_unknown_excluded, aws_s3_bucket, AWS::Not::Mapped]
+rules:
+  - name: parent
+    steps:
+      - filter: {type: [aws_instance, aws_missing_parent, AWS::EC2::Volume]}
+      - assert: {tag: Owner, present: true}
+    rules:
+      - name: child
+        steps:
+          - filter: {type: {in: [aws_missing_child]}}
+          - filter: {type: {starts_with: aws_s3_}}
+          - filter: {type: {is_snake: true}}
+          - assert: {tag: Env, present: true}
+  - name: by-address
+    steps:
+      - filter: {address: {matches: "^module\\\\.app"}}
+      - assert: {tag: Env, present: true}
+"""
+
+_WARNING_MAPPINGS = """
+version: 1
+mappings:
+  aws_instance: AWS::EC2::Instance
+  aws_s3_bucket: AWS::S3::Bucket
+"""
+
+
+class TestPolicyWarnings:
+    """Load-time warnings about unmapped Terraform types and address conditions."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        handler._logged_policy_warnings.clear()
+
+    @staticmethod
+    def _load(policy_text=_WARNING_POLICY, mappings_text=_WARNING_MAPPINGS):
+        from policy import load_policy_text
+        from store import parse_mappings
+
+        return load_policy_text(policy_text), parse_mappings(mappings_text)
+
+    @staticmethod
+    def _warnings(mock_logger):
+        return {
+            call[0][0]: call[1]["extra"] for call in mock_logger.warning.call_args_list
+        }
+
+    def test_warns_unmapped_types_and_address_once(self):
+        """Unmapped type operands/exclusions and address rules are each warned once."""
+        policy, mappings = self._load()
+
+        with patch("handler.logger") as mock_logger:
+            handler.log_policy_warnings(policy, mappings)
+            handler.log_policy_warnings(*self._load())
+
+        assert mock_logger.warning.call_count == 2
+        warnings = self._warnings(mock_logger)
+        unmapped = warnings["Policy references Terraform types missing from mappings"]
+        assert unmapped["unmapped_types"] == [
+            "aws_missing_child",
+            "aws_missing_parent",
+            "aws_unknown_excluded",
+        ]
+        address = warnings["Policy has address conditions, which never match in Config"]
+        assert address["rules"] == ["by-address"]
+
+    def test_warns_again_when_reported_names_change(self):
+        """A policy change that alters the reported names logs again."""
+        policy, mappings = self._load()
+        changed, _ = self._load(_WARNING_POLICY.replace("aws_missing_child", "aws_x"))
+
+        with patch("handler.logger") as mock_logger:
+            handler.log_policy_warnings(policy, mappings)
+            handler.log_policy_warnings(changed, mappings)
+
+        unmapped = [
+            call[1]["extra"]["unmapped_types"]
+            for call in mock_logger.warning.call_args_list
+            if "missing from mappings" in call[0][0]
+        ]
+        assert len(unmapped) == 2
+        assert "aws_x" in unmapped[1]
+
+    def test_no_warnings_for_clean_policy(self):
+        """A policy whose Terraform types are all mapped logs nothing."""
+        clean = """
+version: 1
+exclude_resource_types: [aws_s3_bucket, AWS::Not::Mapped]
+rules:
+  - name: r
+    steps:
+      - filter: {type: aws_instance}
+      - assert: {tag: Env, present: true}
+"""
+        policy, mappings = self._load(clean)
+
+        with patch("handler.logger") as mock_logger:
+            handler.log_policy_warnings(policy, mappings)
+
+        mock_logger.warning.assert_not_called()
+
+    @patch.dict(os.environ, {"POLICY_BUCKET": "test-bucket"})
+    @patch("handler.store")
+    @patch("handler.config_client")
+    def test_handler_logs_warnings_after_load(
+        self, mock_config_client, mock_store, sample_config_event
+    ):
+        """lambda_handler warns once across events for the same policy."""
+        policy, mappings = self._load()
+        mock_store.load_policy.return_value = policy
+        mock_store.load_mappings.return_value = mappings
+        mock_store.load_inventory.return_value = None
+
+        with patch("handler.logger") as mock_logger:
+            handler.lambda_handler(sample_config_event, None)
+            handler.lambda_handler(sample_config_event, None)
+
+        messages = [call[0][0] for call in mock_logger.warning.call_args_list]
+        assert (
+            messages.count("Policy references Terraform types missing from mappings")
+            == 1
+        )
+        assert (
+            messages.count("Policy has address conditions, which never match in Config")
+            == 1
+        )
+
+
 class TestLambdaHandler:
     """Tests for the main lambda_handler function."""
 

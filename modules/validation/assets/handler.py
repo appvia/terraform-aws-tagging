@@ -39,6 +39,10 @@ config_client = boto3.client("config")
 # Module-level set to track which rule sets we've logged the "rules ignored" message for
 _logged_skipped_rules: Set[FrozenSet[str]] = set()
 
+# Load-time warnings already logged, keyed by (kind, reported names) so each
+# distinct report is logged once per container rather than once per event
+_logged_policy_warnings: Set[Tuple[str, FrozenSet[str]]] = set()
+
 
 # Resource class representing the AWS resource being evaluated, extracted from the AWS Config event.
 @dataclass
@@ -191,6 +195,67 @@ def filter_on_resources(
                 return True
 
     return False
+
+
+def _walk_rules(rules):
+    """Yield every rule in the policy, including nested children."""
+    for rule in rules:
+        yield rule
+        yield from _walk_rules(rule.children)
+
+
+def log_policy_warnings(policy: Policy, mappings: Mappings) -> None:
+    """
+    Warn about policy content that can never take effect in AWS Config.
+
+    - Terraform type names (equals/in `type` operands and exclude_resource_types
+      entries without the AWS:: prefix) missing from the mappings never match.
+    - `address` conditions have no meaning in Config: never match in filters,
+      ignored in asserts.
+
+    Each distinct report is logged once, not on every event.
+    """
+    unmapped = {
+        name
+        for name in policy.exclude_resource_types
+        if not name.startswith("AWS::") and name not in mappings.to_config
+    }
+    address_rules = set()
+    for rule in _walk_rules(policy.rules):
+        for step in rule.steps:
+            condition = step.condition
+            if condition.target == "address":
+                address_rules.add(rule.name)
+            elif condition.target == "type" and condition.operator in ("equals", "in"):
+                unmapped.update(
+                    name
+                    for name in condition.operand
+                    if not name.startswith("AWS::") and name not in mappings.to_config
+                )
+
+    if unmapped:
+        key = ("unmapped_types", frozenset(unmapped))
+        if key not in _logged_policy_warnings:
+            _logged_policy_warnings.add(key)
+            logger.warning(
+                "Policy references Terraform types missing from mappings",
+                extra={
+                    "action": "log_policy_warnings",
+                    "unmapped_types": sorted(unmapped),
+                },
+            )
+
+    if address_rules:
+        key = ("address_rules", frozenset(address_rules))
+        if key not in _logged_policy_warnings:
+            _logged_policy_warnings.add(key)
+            logger.warning(
+                "Policy has address conditions, which never match in Config",
+                extra={
+                    "action": "log_policy_warnings",
+                    "rules": sorted(address_rules),
+                },
+            )
 
 
 def evaluate(
@@ -466,6 +531,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
         policy = store.load_policy(policy_bucket, policy_key)
         mappings = store.load_mappings(policy_bucket, mappings_key)
         inventory = store.load_inventory(policy_bucket, accounts_key)
+        log_policy_warnings(policy, mappings)
 
         logger.debug(
             "Loaded policy and mappings",

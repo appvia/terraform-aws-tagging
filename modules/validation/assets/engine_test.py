@@ -547,6 +547,23 @@ class NewTargetsTest(unittest.TestCase):
             terraform_types=("aws_s3_bucket",),
         ).asserted
 
+    def test_type_case_operator_applies_to_terraform_names(self):
+        """Boolean case operators on type test the Terraform names when mapped."""
+        mapped = {
+            "config_type": "AWS::S3::Bucket",
+            "terraform_types": ("aws_s3_bucket",),
+        }
+        assert _run({"type": {"is_snake": True}}, **mapped).asserted
+        assert not _run({"type": {"is_snake": False}}, **mapped).asserted
+        assert not _run({"type": {"is_snake": True}, "not": True}, **mapped).asserted
+        assert _run({"type": {"is_pascal": False}}, **mapped).asserted
+
+    def test_type_case_operator_falls_back_to_config_type(self):
+        """Without a reverse mapping, case operators test the Config type name."""
+        unmapped = {"config_type": "AWS::S3::Bucket", "terraform_types": ()}
+        assert not _run({"type": {"is_snake": True}}, **unmapped).asserted
+        assert _run({"type": {"is_snake": True}, "not": True}, **unmapped).asserted
+
     def test_address_filter_never_matches(self):
         """Test that address filter never matches."""
         assert not _run({"address": {"matches": ".*"}}).asserted

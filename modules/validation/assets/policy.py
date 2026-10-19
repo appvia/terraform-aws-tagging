@@ -192,6 +192,10 @@ def _parse_condition(raw, where):
     # Normalize organizational_path operands by stripping trailing /
     if target == "organizational_path":
         operand = tuple(s.rstrip("/") for s in operand)
+        if not all(operand):
+            raise PolicyError(
+                f"{where}: organizational_path must not be empty or only '/'"
+            )
     return Condition(target, (), operator, operand, negate)
 
 

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-from policy import ASSERT, FILTER
+from policy import ASSERT, BOOLEAN_OPERATORS, FILTER
 
 PASS = "pass"
 FAIL = "fail"
@@ -188,6 +188,15 @@ def _evaluate_type(condition, subject):
     if condition.operator == "equals" or condition.operator == "in":
         # Plain form or in: check if any operand matches
         holds = any(_type_matches(operand, subject) for operand in condition.operand)
+    elif condition.operator in BOOLEAN_OPERATORS:
+        # Case operators take a bool operand, which carries no AWS:: prefix to
+        # dispatch on: test the Terraform names when the Config type maps back
+        # to any, else the Config type itself
+        candidates = subject.terraform_types or (subject.config_type,)
+        holds = any(
+            COMPARISONS[condition.operator](candidate, condition.operand)
+            for candidate in candidates
+        )
     else:
         # Operator form: apply per-operand dispatch
         # For each operand, test it against the appropriate type(s)

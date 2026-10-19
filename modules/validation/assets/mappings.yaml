@@ -11,7 +11,6 @@ mappings:
   aws_security_group: AWS::EC2::SecurityGroup
   aws_lb: AWS::ElasticLoadBalancingV2::LoadBalancer
   aws_alb: AWS::ElasticLoadBalancingV2::LoadBalancer
-  aws_nlb: AWS::ElasticLoadBalancingV2::LoadBalancer
 
   # Storage
   aws_s3_bucket: AWS::S3::Bucket

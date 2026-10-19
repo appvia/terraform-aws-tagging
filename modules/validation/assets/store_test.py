@@ -400,6 +400,56 @@ class TestLoadInventory:
         result = store.load_inventory("test-bucket", "missing.yaml")
         assert result is None
 
+    def test_missing_inventory_is_cached_for_ttl(self, s3_stubber):
+        """NoSuchKey is cached for the TTL: a second call makes no S3 request."""
+        store.configure_cache(enabled=True, ttl_seconds=300)
+        s3_stubber.add_client_error(
+            "get_object",
+            service_error_code="NoSuchKey",
+            http_status_code=404,
+            expected_params={"Bucket": "test-bucket", "Key": "accounts.yaml"},
+        )
+
+        assert store.load_inventory("test-bucket", "accounts.yaml") is None
+        # No response queued: a second GET would raise UnStubbedResponseError
+        assert store.load_inventory("test-bucket", "accounts.yaml") is None
+        s3_stubber.assert_no_pending_responses()
+
+    def test_missing_inventory_refetched_after_ttl(
+        self, s3_stubber, sample_accounts_yaml
+    ):
+        """Once the TTL expires, a cached NoSuchKey is retried and may now exist."""
+        store.configure_cache(enabled=True, ttl_seconds=300)
+        s3_stubber.add_client_error(
+            "get_object", service_error_code="NoSuchKey", http_status_code=404
+        )
+        s3_stubber.add_response(
+            "get_object",
+            {
+                "Body": io.BytesIO(sample_accounts_yaml.encode("utf-8")),
+                "ETag": '"ghi789"',
+            },
+            {"Bucket": "test-bucket", "Key": "accounts.yaml"},
+        )
+
+        assert store.load_inventory("test-bucket", "accounts.yaml") is None
+        with patch("store.time.time", return_value=time.time() + 301):
+            accounts = store.load_inventory("test-bucket", "accounts.yaml")
+        assert "123456789012" in accounts
+        s3_stubber.assert_no_pending_responses()
+
+    def test_missing_inventory_not_cached_when_caching_disabled(self, s3_stubber):
+        """With caching disabled, every call fetches the inventory again."""
+        store.configure_cache(enabled=False, ttl_seconds=300)
+        for _ in range(2):
+            s3_stubber.add_client_error(
+                "get_object", service_error_code="NoSuchKey", http_status_code=404
+            )
+
+        assert store.load_inventory("test-bucket", "accounts.yaml") is None
+        assert store.load_inventory("test-bucket", "accounts.yaml") is None
+        s3_stubber.assert_no_pending_responses()
+
 
 # ============================================================================
 # Tests for caching

@@ -20,6 +20,9 @@ s3_client = boto3.client("s3")
 # Cache key format: f"{bucket}/{key}"
 _cache = {}
 
+# ETag sentinel marking a cached NoSuchKey for the inventory (negative cache)
+_MISSING = object()
+
 # Cache configuration
 _cache_config = {"enabled": True, "ttl_seconds": 300}
 
@@ -409,6 +412,15 @@ def load_inventory(bucket: str, key: Optional[str]) -> Optional[Dict[str, Accoun
         )
         return None
 
+    # A cached NoSuchKey (negative cache entry) is served for the TTL, so an
+    # absent inventory does not cost a GET on every event
+    cache_key = f"{bucket}/{key}"
+    cached = _cache.get(cache_key)
+    if _cache_config["enabled"] and cached and cached[0] is _MISSING:
+        if time.time() - cached[1] < _cache_config["ttl_seconds"]:
+            return None
+        del _cache[cache_key]
+
     # Try to load with cache
     try:
         return _load_with_cache(
@@ -423,6 +435,8 @@ def load_inventory(bucket: str, key: Optional[str]) -> Optional[Dict[str, Accoun
                 "Inventory object does not exist (NoSuchKey), returning None",
                 extra={"action": "load_inventory", "bucket": bucket, "key": key},
             )
+            if _cache_config["enabled"]:
+                _cache[cache_key] = (_MISSING, time.time(), None)
             return None
 
         # Re-raise other errors
