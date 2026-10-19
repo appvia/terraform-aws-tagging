@@ -72,7 +72,8 @@ variable "policy" {
   }
 
   validation {
-    condition     = can(tolist(yamldecode(var.policy).rules))
+    ## A YAML sequence decodes to a tuple; accept heterogeneous rules and [], reject maps and scalars
+    condition     = try(length(yamldecode(var.policy).rules), -1) >= 0 && !can(keys(yamldecode(var.policy).rules)) && !can(tostring(yamldecode(var.policy).rules))
     error_message = "The policy must contain a rules list."
   }
 }

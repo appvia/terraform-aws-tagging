@@ -109,11 +109,21 @@ variable "organizations_id" {
 variable "policy_bucket_arn" {
   description = "The ARN of the S3 bucket holding the tagging policy, mappings and inventory."
   type        = string
+
+  validation {
+    condition     = var.policy_bucket_arn != null && can(regex("^arn:[^:]+:s3:::", var.policy_bucket_arn))
+    error_message = "policy_bucket_arn must be set to the policy bucket ARN (arn:aws:s3:::name); when using the pack module it is required unless lambda_function_arn is provided."
+  }
 }
 
 variable "policy_bucket_name" {
   description = "The name of the S3 bucket holding the tagging policy, mappings and inventory."
   type        = string
+
+  validation {
+    condition     = var.policy_bucket_name != null && try(length(var.policy_bucket_name) > 0, false)
+    error_message = "policy_bucket_name must be set; when using the pack module it is required unless lambda_function_arn is provided."
+  }
 }
 
 variable "policy_key" {

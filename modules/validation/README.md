@@ -329,6 +329,7 @@ View compliance status directly in the AWS Config console:
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_environment_variables"></a> [environment\_variables](#output\_environment\_variables) | The environment variables configured on the Lambda function (policy bucket, object keys, cache and log settings). |
 | <a name="output_lambda_arn"></a> [lambda\_arn](#output\_lambda\_arn) | The ARN of the Lambda function for tagging compliance. |
 | <a name="output_lambda_name"></a> [lambda\_name](#output\_lambda\_name) | The name of the Lambda function for tagging compliance. |
 <!-- END_TF_DOCS -->

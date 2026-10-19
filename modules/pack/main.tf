@@ -67,13 +67,6 @@ resource "aws_s3_object" "conformance_pack_template" {
 
   content = local.template
   etag    = md5(local.template)
-
-  lifecycle {
-    precondition {
-      condition     = var.lambda_function_arn != null || (var.policy_bucket_name != null && var.policy_bucket_arn != null)
-      error_message = "policy_bucket_name and policy_bucket_arn are required when lambda_function_arn is not provided."
-    }
-  }
 }
 
 ## Provision the custom lambda function which can be shared across multiple

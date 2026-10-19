@@ -62,19 +62,7 @@ module "lambda_function" {
   trigger_on_package_timestamp = false
 
   ## Environment variables for the Lambda function
-  environment_variables = merge(
-    {
-      LOG_LEVEL               = var.lambda_log_level
-      MAPPINGS_KEY            = var.mappings_key
-      POLICY_BUCKET           = var.policy_bucket_name
-      POLICY_KEY              = var.policy_key
-      RULES_CACHE_ENABLED     = var.rules_cache_enabled ? "true" : "false"
-      RULES_CACHE_TTL_SECONDS = tostring(var.rules_cache_ttl_seconds)
-    },
-    var.accounts_key != null ? {
-      ACCOUNTS_KEY = var.accounts_key
-    } : {},
-  )
+  environment_variables = local.environment_variables
 
   ## Lambda Role
   create_role                   = var.lambda_create_role

@@ -5,12 +5,30 @@ mock_provider "aws" {
 variables {
   enable_organizations = true
   organizations_id     = "o-1234567890"
-  policy               = <<-YAML
+  ## A multi-rule policy whose rules differ in shape (with/without description, nested rules)
+  policy = <<-YAML
     version: 1
+    exclude_resource_types: []
     rules:
       - name: required-tags
+        description: Every taggable resource carries the baseline tags
         steps:
-          - assert: {tag: [Environment], present: true}
+          - assert: {tag: [Environment, Product, GitRepo], present: true}
+      - name: git-repo-tag
+        steps:
+          - filter: {tag: GitRepo, present: true}
+          - assert: {tag: GitRepo, starts_with: https://github.com/}
+      - name: environment-values
+        description: Environment is one of the allowed values
+        steps:
+          - filter: {tag: Environment, present: true}
+          - assert: {tag: Environment, in: [Production, Staging, Development]}
+      - name: grouped
+        rules:
+          - name: data-classification
+            steps:
+              - filter: {type: [aws_s3_bucket, AWS::RDS::DBInstance]}
+              - assert: {tag: DataClassification, present: true}
   YAML
   tags = {
     "CostCenter"  = "12345"
@@ -130,6 +148,48 @@ run "invalid_policy_version" {
     policy = <<-YAML
       version: 2
       rules: []
+    YAML
+  }
+
+  expect_failures = [var.policy]
+}
+
+run "empty_rules" {
+  command = plan
+
+  variables {
+    policy = <<-YAML
+      version: 1
+      rules: []
+    YAML
+  }
+
+  assert {
+    condition     = output.policy_version == sha256(var.policy)
+    error_message = "An empty rules list must be accepted"
+  }
+}
+
+run "invalid_policy_rules_map" {
+  command = plan
+
+  variables {
+    policy = <<-YAML
+      version: 1
+      rules: {a: 1}
+    YAML
+  }
+
+  expect_failures = [var.policy]
+}
+
+run "invalid_policy_rules_string" {
+  command = plan
+
+  variables {
+    policy = <<-YAML
+      version: 1
+      rules: none
     YAML
   }
 
