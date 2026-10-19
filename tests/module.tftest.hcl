@@ -330,6 +330,15 @@ run "organizations_module_events_and_permissions" {
   }
 
   assert {
+    condition = anytrue(flatten([
+      for s in data.aws_iam_policy_document.permissions.statement : [
+        for c in coalesce(s.condition, []) : s.effect == "Allow" && toset(s.actions) == toset(["s3:ListBucket"]) && toset(s.resources) == toset(["arn:aws:s3:::tagging-compliance"]) && c.test == "StringEqualsIfExists" && c.variable == "s3:prefix" && toset(c.values) == toset(["accounts.yaml"])
+      ]
+    ]))
+    error_message = "The lambda must be granted s3:ListBucket on the bucket, scoped to the accounts key prefix, so a missing inventory returns 404"
+  }
+
+  assert {
     condition = anytrue([
       for s in data.aws_iam_policy_document.permissions.statement : contains(s.actions, "organizations:ListTagsForResource")
     ])

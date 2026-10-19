@@ -100,6 +100,21 @@ def _client_error(code, operation="HeadObject"):
 # ============================================================================
 
 
+class TestClients:
+    """The AWS clients retry throttled calls (Organizations APIs throttle hard)."""
+
+    @pytest.mark.parametrize(
+        "client",
+        [handler.organizations_client, handler.s3_client, handler.config_client],
+    )
+    def test_clients_use_adaptive_retries(self, client):
+        # botocore normalises max_attempts=10 (retries) to 11 total attempts
+        assert client.meta.config.retries == {
+            "mode": "adaptive",
+            "total_max_attempts": 11,
+        }
+
+
 class TestAccountInfo:
     """Tests for the AccountInfo dataclass."""
 

@@ -45,7 +45,7 @@ variable "conformance_pack_name" {
 }
 
 variable "conformance_pack_template_uri" {
-  description = "The S3 URI (s3://bucket/key) of the conformance pack template (pack module output s3_template_uri). Required with conformance_pack_name because DescribeOrganizationConformancePacks does not return the template location."
+  description = "The S3 URI (s3://bucket/key) of the conformance pack template (the pack module's s3_bucket_name and s3_template_key, e.g. built with format(); referencing its s3_template_uri output from the root module creates a dependency cycle). Required with conformance_pack_name because DescribeOrganizationConformancePacks does not return the template location."
   type        = string
   default     = null
 

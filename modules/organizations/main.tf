@@ -13,6 +13,24 @@ data "aws_iam_policy_document" "permissions" {
     ]
   }
 
+  ## Without s3:ListBucket S3 answers a HeadObject on a missing key with 403 rather than
+  ## 404, so the first run (no accounts.yaml yet) would fail. The HeadObject request
+  ## carries no s3:prefix, so a plain StringEquals would never match it; IfExists lets
+  ## that implicit check through while explicit listings must use the accounts key as
+  ## their prefix. A prefix-less ListObjects can still list key names in the bucket.
+  statement {
+    sid       = "AllowInventoryExistenceCheck"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [var.bucket_arn]
+
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "s3:prefix"
+      values   = [var.accounts_key]
+    }
+  }
+
   dynamic "statement" {
     for_each = var.kms_key_arn != null ? [1] : []
 

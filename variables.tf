@@ -34,7 +34,9 @@ variable "organizations" {
     ## The name of the organization conformance pack to re-put with a new InventoryVersion when the
     ## inventory changes (forces an org-wide re-evaluation). Requires conformance_pack_template_uri.
     conformance_pack_name = optional(string)
-    ## The S3 URI of the conformance pack template (pack module output s3_template_uri).
+    ## The S3 URI (s3://bucket/key) of the conformance pack template. Build it from the values passed
+    ## to the pack module's s3_bucket_name and s3_template_key; referencing the pack module output
+    ## s3_template_uri creates a dependency cycle, as the pack consumes this module's accounts_key.
     conformance_pack_template_uri = optional(string)
     ## Trigger the sync on account create, close, move, tag and untag events. Organizations CloudTrail
     ## events are delivered to EventBridge only in us-east-1, so the module must be deployed in
@@ -52,7 +54,7 @@ variable "organizations" {
       ## The runtime environment for the Lambda function.
       runtime = optional(string, "python3.12")
       ## The timeout for the Lambda function in seconds.
-      timeout = optional(number, 30)
+      timeout = optional(number, 60)
     }), {})
   })
   default = null

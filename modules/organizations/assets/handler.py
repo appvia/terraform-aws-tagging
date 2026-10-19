@@ -20,15 +20,18 @@ import os
 from typing import Any, Dict, List
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 import yaml
 
+# Adaptive retries absorb the Organizations API throttling seen on large organizations
+CLIENT_CONFIG = Config(retries={"mode": "adaptive", "max_attempts": 10})
 # Boto3 client for AWS Organizations, used to list OUs, accounts and account tags
-organizations_client = boto3.client("organizations")
+organizations_client = boto3.client("organizations", config=CLIENT_CONFIG)
 # S3 client is used to store the account inventory in the policy bucket
-s3_client = boto3.client("s3")
+s3_client = boto3.client("s3", config=CLIENT_CONFIG)
 # Config client is used to re-put the organization conformance pack on change
-config_client = boto3.client("config")
+config_client = boto3.client("config", config=CLIENT_CONFIG)
 
 # The version of the inventory format (parsed by the validation lambda)
 INVENTORY_VERSION = 1
