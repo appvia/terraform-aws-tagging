@@ -206,5 +206,9 @@ When making changes:
 - tflint (for Terraform linting)
 - trivy (for security scanning)
 - Python 3.x with pytest and black (for Lambda testing/formatting)
+- Lambda packaging (`pip_requirements = true`): the host running `terraform plan`/`apply` needs a
+  Python matching each Lambda runtime on `PATH` (validation `python3.14`, organizations
+  `python3.12` by default) with `pip` and PyPI access; override `lambda_runtime` (config/validation)
+  or `organizations.lambda.runtime` (root) to build with another interpreter
 - AWS CLI (for manual testing)
 - commitlint (for commit message validation)

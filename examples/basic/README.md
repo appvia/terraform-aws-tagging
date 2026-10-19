@@ -89,3 +89,15 @@ terraform destroy
 **Warning**: This will delete the S3 bucket and all policy versions.
 
 <!-- BEGIN_TF_DOCS -->
+## Providers
+
+No providers.
+
+## Inputs
+
+No inputs.
+
+## Outputs
+
+No outputs.
+<!-- END_TF_DOCS -->

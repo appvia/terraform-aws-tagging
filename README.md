@@ -135,6 +135,16 @@ Wraps the validation Lambda into an AWS Config Conformance Pack for organization
 
 **[📖 Pack Module Documentation](./modules/pack/README.md)**
 
+## Prerequisites
+
+- Terraform >= 1.3.0 and the AWS provider >= 6.0.0
+- **Lambda build host**: the validation and organizations Lambdas are packaged with their
+  `requirements.txt` (`pip_requirements = true`), so the machine running `terraform plan`/`apply`
+  needs, on its `PATH`, a Python interpreter matching each Lambda runtime (`python3.14` for the
+  validation Lambda, `python3.12` for the organizations Lambda by default) with `pip`, and network
+  access to PyPI. To build with a different interpreter, override the runtime: `lambda_runtime` on
+  the config module (or validation module) and `organizations.lambda.runtime` on the root module.
+
 ## Usage
 
 ### Step 1: Deploy S3 Policy Bucket (Management Account)
@@ -449,61 +459,65 @@ module "tagging_evaluator" {
 
 ## Rule Examples
 
+Each example is a complete policy file; check one with
+`python3 modules/validation/assets/policy.py tagging-policy.yaml`. Combine rules under a single
+`rules:` list in your own policy.
+
 ### Basic Required Tags
 
-```hcl
-{
-  RuleId       = "require-environment"
-  ResourceType = "AWS::EC2::Instance"
-  Tag          = "Environment"
-  Required     = true
-  Values       = ["production", "staging", "development"]
-  AccountIds   = ["*"]
-  Enabled      = true
-}
+```yaml
+version: 1
+rules:
+  - name: require-environment
+    description: EC2 instances must carry a valid Environment tag
+    steps:
+      - filter: {type: aws_instance}
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [production, staging, development]}
 ```
 
 ### Email Pattern Validation
 
-```hcl
-{
-  RuleId       = "validate-owner-email"
-  ResourceType = "AWS::*"
-  Tag          = "Owner"
-  Required     = true
-  ValuePattern = "^[a-zA-Z0-9._%+-]+@(company\\.com|partner\\.com)$"
-  Values       = []
-  AccountIds   = ["*"]
-  Enabled      = true
-}
+```yaml
+version: 1
+rules:
+  - name: validate-owner-email
+    description: Every resource must have an Owner tag holding a company email address
+    steps:
+      - assert: {tag: Owner, present: true}
+      - assert: {tag: Owner, matches: '^[a-zA-Z0-9._%+-]+@(company\.com|partner\.com)$'}
 ```
 
 ### Account-Specific Rules
 
-```hcl
-{
-  RuleId       = "prod-cost-tracking"
-  ResourceType = "AWS::*"
-  Tag          = "CostCenter"
-  Required     = true
-  ValuePattern = "^CC-[0-9]{4}$"
-  AccountIds   = ["111222333444", "555666777888"]  # Prod accounts only
-  Enabled      = true
-}
+```yaml
+version: 1
+rules:
+  - name: prod-cost-tracking
+    description: Production accounts must tag resources with a cost centre
+    steps:
+      - filter: {account_id: ["111222333444", "555666777888"]}
+      - assert: {tag: CostCenter, matches: '^CC-[0-9]{4}$'}
+  - name: production-ou-owner
+    description: Accounts under the Production OU (needs the account inventory)
+    steps:
+      - filter: {organizational_path: root/Production}
+      - assert: {tag: Owner, present: true}
 ```
 
 ### Optional Tags
 
-```hcl
-{
-  RuleId       = "optional-project"
-  ResourceType = "AWS::Lambda::Function"
-  Tag          = "Project"
-  Required     = false  # Only validate if present
-  Values       = ["web-app", "api", "data-pipeline"]
-  AccountIds   = ["*"]
-  Enabled      = true
-}
+A filter on the tag being present makes the rule apply only to resources that carry it:
+
+```yaml
+version: 1
+rules:
+  - name: optional-project
+    description: When set, the Project tag must be a known project
+    steps:
+      - filter: {type: aws_lambda_function}
+      - filter: {tag: Project, present: true}
+      - assert: {tag: Project, in: [web-app, api, data-pipeline]}
 ```
 
 ## Monitoring and Compliance
@@ -652,10 +666,10 @@ module "tagging_config_prod" {
 
 ## Best Practices
 
-1. **Start with Observability**: Use `Required = false` initially to understand current state
+1. **Start with Observability**: Use `severity: warning` on new rules initially; violations are logged but resources stay COMPLIANT
 2. **Test in Non-Production**: Validate rules in dev/test accounts before production
-3. **Use Descriptive RuleIds**: Make rules easy to identify (e.g., `"prod-require-cost-center"`)
-4. **Document Patterns**: Add comments explaining complex regex patterns
+3. **Use Descriptive Rule Names**: Make rules easy to identify (e.g., `name: prod-require-cost-center`) and fill in `description`
+4. **Document Patterns**: Add YAML comments explaining complex `matches` regular expressions
 5. **Version Control**: Store Terraform code in Git for audit trail
 6. **Gradual Enablement**: Enable rules incrementally to avoid overwhelming teams
 7. **Monitor Compliance**: Set up dashboards and alerts for compliance metrics
@@ -813,6 +827,29 @@ The YAML policy format adds:
 - **Richer operators**: `contains`, `starts_with`, `ends_with`, `matches` (regex), case operators (`is_kebab`, `is_snake`, etc.)
 - **Severity levels**: `severity: warning` (logged, but resource is COMPLIANT) vs `severity: error` (NON_COMPLIANT, the default)
 
+### Resource Type Scope
+
+`mappings.yaml` is also the allowlist of evaluated resource types: a resource whose AWS Config type
+is not a value in the mappings is reported NOT_APPLICABLE ("is not taggable"). Resource types that
+the DynamoDB rules evaluated but that are missing from the shipped mappings therefore stop being
+evaluated after the upgrade. Add them through the root module's `mappings` variable, which is merged
+over the shipped file:
+
+```hcl
+module "tagging" {
+  source = "appvia/tagging/aws"
+
+  policy = file("${path.module}/tagging-policy.yaml")
+  mappings = {
+    aws_sagemaker_notebook_instance = "AWS::SageMaker::NotebookInstance"
+  }
+  # ...
+}
+```
+
+The validation Lambda logs a warning at load time listing Terraform type names used in `type`
+conditions or `exclude_resource_types` that are missing from the mappings.
+
 ### Known Limitations
 
 - **CI action compatibility**: The `terraform-tag-check` action in `appvia-cicd-workflows` does not yet support `AWS::` types or the new `organizational_path`, `account_id`, `account_tag` targets. Policies using these features will be rejected by the action.
@@ -824,7 +861,6 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 
 1. Make changes to the `.terraform-docs.yml` file
 2. Fetch the `terraform-docs` binary (https://terraform-docs.io/user-guide/installation/)
-3. Run `terraform-docs markdown table --output-file ${PWD}/README.md --output-mode inject .`
 3. Run `terraform-docs markdown table --output-file ${PWD}/README.md --output-mode inject .`
 
 <!-- BEGIN_TF_DOCS -->
@@ -842,7 +878,7 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 | <a name="input_bucket"></a> [bucket](#input\_bucket) | Configuration for the S3 bucket holding the tagging policy, the resource type mappings and the account inventory. | <pre>object({<br/>    ## The name of the S3 bucket to provision.<br/>    name = optional(string, "tagging-compliance")<br/>    ## The ARN of an existing KMS key used to encrypt the bucket (aws:kms). When null, AES256 is used. The module never creates a key.<br/>    kms_key_arn = optional(string)<br/>    ## Whether to delete all objects (including versions) when the bucket is destroyed.<br/>    force_destroy = optional(bool, false)<br/>  })</pre> | `{}` | no |
 | <a name="input_enable_organizations"></a> [enable\_organizations](#input\_enable\_organizations) | Enable organization access to the policy bucket. When enabled, allows any account in the organization to read the policy, mappings and inventory. | `bool` | `true` | no |
 | <a name="input_mappings"></a> [mappings](#input\_mappings) | Additional Terraform to AWS Config resource type mappings (e.g. aws\_s3\_bucket = "AWS::S3::Bucket"), merged over the shipped mappings file. The mappings also define the taggable resource types. | `map(string)` | `{}` | no |
-| <a name="input_organizations"></a> [organizations](#input\_organizations) | Configuration for the organizations inventory lambda. When null, no account inventory is maintained. | <pre>object({<br/>    ## The name of the organization conformance pack to re-put with a new InventoryVersion when the<br/>    ## inventory changes (forces an org-wide re-evaluation). Requires conformance_pack_template_uri.<br/>    conformance_pack_name = optional(string)<br/>    ## The S3 URI of the conformance pack template (pack module output s3_template_uri).<br/>    conformance_pack_template_uri = optional(string)<br/>    ## Trigger the sync on account create, close, move, tag and untag events. Organizations CloudTrail<br/>    ## events are delivered to EventBridge only in us-east-1, so the module must be deployed in<br/>    ## us-east-1 for this trigger to fire; elsewhere only the scheduled sync runs.<br/>    enable_account_event_sync = optional(bool, true)<br/>    lambda = optional(object({<br/>      ## The description of the Lambda function to handle AWS Organization account movements.<br/>      description = optional(string, "Handles AWS Organization account movements for tagging compliance.")<br/>      ## The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL.<br/>      log_level = optional(string, "INFO")<br/>      ## The amount of memory in MB allocated to the Lambda function.<br/>      memory_size = optional(number, 128)<br/>      ## The name of the Lambda function to handle AWS Organization account movements.<br/>      name = optional(string, "organization-compliance")<br/>      ## The runtime environment for the Lambda function.<br/>      runtime = optional(string, "python3.12")<br/>      ## The timeout for the Lambda function in seconds.<br/>      timeout = optional(number, 30)<br/>    }), {})<br/>  })</pre> | `null` | no |
+| <a name="input_organizations"></a> [organizations](#input\_organizations) | Configuration for the organizations inventory lambda. When null, no account inventory is maintained. | <pre>object({<br/>    ## The name of the organization conformance pack to re-put with a new InventoryVersion when the<br/>    ## inventory changes (forces an org-wide re-evaluation). Requires conformance_pack_template_uri.<br/>    conformance_pack_name = optional(string)<br/>    ## The S3 URI (s3://bucket/key) of the conformance pack template. Build it from the values passed<br/>    ## to the pack module's s3_bucket_name and s3_template_key; referencing the pack module output<br/>    ## s3_template_uri creates a dependency cycle, as the pack consumes this module's accounts_key.<br/>    conformance_pack_template_uri = optional(string)<br/>    ## Trigger the sync on account create, close, move, tag and untag events. Organizations CloudTrail<br/>    ## events are delivered to EventBridge only in us-east-1, so the module must be deployed in<br/>    ## us-east-1 for this trigger to fire; elsewhere only the scheduled sync runs.<br/>    enable_account_event_sync = optional(bool, true)<br/>    lambda = optional(object({<br/>      ## The description of the Lambda function to handle AWS Organization account movements.<br/>      description = optional(string, "Handles AWS Organization account movements for tagging compliance.")<br/>      ## The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL.<br/>      log_level = optional(string, "INFO")<br/>      ## The amount of memory in MB allocated to the Lambda function.<br/>      memory_size = optional(number, 128)<br/>      ## The name of the Lambda function to handle AWS Organization account movements.<br/>      name = optional(string, "organization-compliance")<br/>      ## The runtime environment for the Lambda function.<br/>      runtime = optional(string, "python3.12")<br/>      ## The timeout for the Lambda function in seconds.<br/>      timeout = optional(number, 60)<br/>    }), {})<br/>  })</pre> | `null` | no |
 | <a name="input_organizations_id"></a> [organizations\_id](#input\_organizations\_id) | AWS Organization ID allowed to read the policy bucket. | `string` | `null` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to all resources. | `map(string)` | `{}` | no |
 
