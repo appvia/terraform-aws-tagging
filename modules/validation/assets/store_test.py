@@ -282,6 +282,17 @@ class TestDefaultMappings:
         for rule in policy.rules:
             collect_types(rule)
 
+        # Verify we actually collected the expected types (so test can't pass vacuously)
+        expected_types = {
+            "aws_s3_bucket",
+            "aws_db_instance",
+            "aws_dynamodb_table",
+            "aws_instance",
+        }
+        assert (
+            terraform_types == expected_types
+        ), f"Expected to collect {expected_types}, got {terraform_types}"
+
         # Verify all Terraform types are mapped
         missing = terraform_types - set(mappings.to_config.keys())
         assert not missing, f"Terraform types not in mappings.yaml: {missing}"
@@ -449,6 +460,47 @@ class TestCaching:
         policy2 = store.load_policy("test-bucket", "policy.yaml")
 
         assert policy1 == policy2
+
+    def test_revalidate_invalid_content_raises(self, s3_stubber, sample_policy_yaml):
+        """After TTL, revalidation returns new invalid content → raises PolicyError."""
+        store.configure_cache(enabled=True, ttl_seconds=1)
+
+        # First call fetches valid policy from S3
+        s3_stubber.add_response(
+            "get_object",
+            {
+                "Body": io.BytesIO(sample_policy_yaml.encode("utf-8")),
+                "ETag": '"abc123"',
+            },
+            {"Bucket": "test-bucket", "Key": "policy.yaml"},
+        )
+
+        policy1 = store.load_policy("test-bucket", "policy.yaml")
+        assert len(policy1.rules) == 1  # Verify valid policy was cached
+
+        # Wait for TTL to expire
+        time.sleep(1.1)
+
+        # Second call after TTL - revalidate returns NEW invalid content
+        invalid_policy = """version: 2
+rules: []
+"""
+        s3_stubber.add_response(
+            "get_object",
+            {
+                "Body": io.BytesIO(invalid_policy.encode("utf-8")),
+                "ETag": '"def456"',  # Different ETag = new content
+            },
+            {
+                "Bucket": "test-bucket",
+                "Key": "policy.yaml",
+                "IfNoneMatch": '"abc123"',
+            },
+        )
+
+        # Should raise PolicyError, not return cached valid policy
+        with pytest.raises(PolicyError, match="version"):
+            store.load_policy("test-bucket", "policy.yaml")
 
     def test_revalidate_error_serves_stale(
         self, s3_stubber, sample_policy_yaml, caplog
