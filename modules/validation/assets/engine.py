@@ -179,25 +179,30 @@ def _type_matches(operand, subject):
 
 
 def _evaluate_type(condition, subject):
-    """Special evaluation for type conditions."""
-    # For each operand, check if it matches (AWS:: against config_type, others against terraform_types)
+    """Special evaluation for type conditions.
+
+    Per-operand dispatch: AWS:: operands are tested against config_type,
+    other operands are tested against terraform_types.
+    The condition holds if any operand holds.
+    """
     if condition.operator == "equals" or condition.operator == "in":
         # Plain form or in: check if any operand matches
         holds = any(_type_matches(operand, subject) for operand in condition.operand)
     else:
-        # Operator form: apply the operator to the right type values
-        # For operators like starts_with, we apply them to terraform types if present, else config_type
-        if subject.terraform_types:
-            # Apply to terraform types
-            holds = any(
-                COMPARISONS[condition.operator](tf_type, condition.operand)
-                for tf_type in subject.terraform_types
-            )
-        else:
-            # Apply to config_type
-            holds = COMPARISONS[condition.operator](
-                subject.config_type, condition.operand
-            )
+        # Operator form: apply per-operand dispatch
+        # For each operand, test it against the appropriate type(s)
+        def operand_holds(operand):
+            if operand.startswith("AWS::"):
+                # AWS:: operand: test against config_type
+                return COMPARISONS[condition.operator](subject.config_type, (operand,))
+            else:
+                # Terraform operand: test against each terraform_type
+                return any(
+                    COMPARISONS[condition.operator](tf_type, (operand,))
+                    for tf_type in subject.terraform_types
+                )
+
+        holds = any(operand_holds(operand) for operand in condition.operand)
 
     if condition.negate:
         holds = not holds

@@ -516,6 +516,37 @@ class NewTargetsTest(unittest.TestCase):
             terraform_types=("aws_s3_bucket",),
         ).asserted
 
+    def test_type_starts_with_aws_operand_uses_config_type(self):
+        """Test that AWS:: operand uses config_type even with terraform_types present."""
+        assert _run(
+            {"type": {"starts_with": "AWS::S3::"}},
+            config_type="AWS::S3::Bucket",
+            terraform_types=("aws_s3_bucket",),
+        ).asserted
+
+    def test_type_terraform_operand_no_reverse_mapping_never_matches(self):
+        """Test that Terraform operand with no reverse mapping never matches."""
+        assert not _run(
+            {"type": {"starts_with": "aws_s3_"}},
+            config_type="AWS::S3::Bucket",
+            terraform_types=(),
+        ).asserted
+
+    def test_type_mixed_operands_any_of(self):
+        """Test that mixed AWS:: and Terraform operands work (any-of)."""
+        # DynamoDB subject with no terraform_types
+        assert _run(
+            {"type": ["AWS::DynamoDB::Table", "aws_s3_bucket"]},
+            config_type="AWS::DynamoDB::Table",
+            terraform_types=(),
+        ).asserted
+        # S3 subject with terraform_types
+        assert _run(
+            {"type": ["AWS::DynamoDB::Table", "aws_s3_bucket"]},
+            config_type="AWS::S3::Bucket",
+            terraform_types=("aws_s3_bucket",),
+        ).asserted
+
     def test_address_filter_never_matches(self):
         """Test that address filter never matches."""
         assert not _run({"address": {"matches": ".*"}}).asserted
