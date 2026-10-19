@@ -2,12 +2,20 @@ locals {
   ## Determine the Lambda function ARN to use in the conformance pack template
   lambda_arn = var.lambda_function_arn != null ? var.lambda_function_arn : try(module.lambda_function[0].lambda_arn, null)
 
+  ## Indicates if the account inventory is read from the policy bucket
+  inventory_enabled = var.accounts_key != null && var.policy_bucket_name != null
+
+  ## The inventory version is the content-sha256 metadata of the inventory object, the
+  ## same value the organizations lambda sets when it re-puts the pack, so plans do not
+  ## drift and applies do not trigger an org-wide re-evaluation; "none" when absent.
+  inventory_version = try(data.aws_s3_object.inventory[0].metadata["content-sha256"], "none")
+
   ## The input parameters passed to the conformance pack; the version hashes force a
-  ## re-evaluation when the policy or mappings change. InventoryVersion is deliberately
-  ## left to the template default and is only set by the organizations lambda.
+  ## re-evaluation when the policy, mappings or inventory change.
   pack_input_parameters = merge(var.input_parameters, {
-    PolicyVersion   = var.policy_version
-    MappingsVersion = var.mappings_version
+    PolicyVersion    = var.policy_version
+    MappingsVersion  = var.mappings_version
+    InventoryVersion = local.inventory_version
   })
 
   ## The rendered conformance pack template

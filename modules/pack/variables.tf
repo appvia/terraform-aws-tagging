@@ -47,7 +47,7 @@ variable "excluded_accounts" {
 }
 
 variable "input_parameters" {
-  description = "Map of additional input parameters to pass to the conformance pack. PolicyVersion and MappingsVersion are always set from policy_version and mappings_version; InventoryVersion is left to the template default and managed by the organizations lambda."
+  description = "Map of additional input parameters to pass to the conformance pack. PolicyVersion and MappingsVersion are always set from policy_version and mappings_version; InventoryVersion is read from the content-sha256 metadata of the inventory object (or none)."
   type        = map(string)
   default     = {}
 }

@@ -61,10 +61,142 @@ run "organization_pack" {
     condition = {
       for p in aws_config_organization_conformance_pack.tagging[0].input_parameter : p.parameter_name => p.parameter_value
       } == {
-      PolicyVersion   = "policy-hash"
-      MappingsVersion = "mappings-hash"
+      PolicyVersion    = "policy-hash"
+      MappingsVersion  = "mappings-hash"
+      InventoryVersion = "none"
     }
-    error_message = "The pack must pass PolicyVersion and MappingsVersion only (InventoryVersion is left to the template default)"
+    error_message = "The pack must pass PolicyVersion, MappingsVersion and InventoryVersion=none without an inventory"
+  }
+}
+
+run "organization_pack_with_inventory" {
+  command = plan
+
+  module {
+    source = "./modules/pack"
+  }
+
+  variables {
+    accounts_key = "accounts.yaml"
+  }
+
+  override_resource {
+    target          = module.lambda_function[0].module.lambda_function.aws_lambda_function.this[0]
+    override_during = plan
+    values = {
+      arn = "arn:aws:lambda:eu-west-2:123456789012:function:tagging-compliance-compliance-tagging"
+    }
+  }
+
+  override_data {
+    target = data.aws_s3_objects.inventory[0]
+    values = {
+      keys = ["accounts.yaml", "accounts.yaml.bak"]
+    }
+  }
+
+  override_data {
+    target = data.aws_s3_object.inventory[0]
+    values = {
+      metadata = {
+        "content-sha256" = "inventory-hash"
+        "generated-at"   = "2026-10-19T00:00:00+00:00"
+      }
+    }
+  }
+
+  assert {
+    condition = {
+      for p in aws_config_organization_conformance_pack.tagging[0].input_parameter : p.parameter_name => p.parameter_value
+    }["InventoryVersion"] == "inventory-hash"
+    error_message = "InventoryVersion must be the content-sha256 metadata of the inventory object (as set by the organizations lambda)"
+  }
+}
+
+run "organization_pack_inventory_absent" {
+  command = plan
+
+  module {
+    source = "./modules/pack"
+  }
+
+  variables {
+    accounts_key = "accounts.yaml"
+  }
+
+  override_resource {
+    target          = module.lambda_function[0].module.lambda_function.aws_lambda_function.this[0]
+    override_during = plan
+    values = {
+      arn = "arn:aws:lambda:eu-west-2:123456789012:function:tagging-compliance-compliance-tagging"
+    }
+  }
+
+  override_data {
+    target = data.aws_s3_objects.inventory[0]
+    values = {
+      keys = ["accounts.yaml.bak"]
+    }
+  }
+
+  assert {
+    condition     = length(data.aws_s3_object.inventory) == 0
+    error_message = "The inventory object must not be read when it does not exist"
+  }
+
+  assert {
+    condition = {
+      for p in aws_config_organization_conformance_pack.tagging[0].input_parameter : p.parameter_name => p.parameter_value
+    }["InventoryVersion"] == "none"
+    error_message = "InventoryVersion must be none when the inventory object does not exist yet"
+  }
+}
+
+run "account_pack_with_inventory" {
+  command = plan
+
+  module {
+    source = "./modules/pack"
+  }
+
+  variables {
+    accounts_key             = "accounts.yaml"
+    deploy_organization_wide = false
+  }
+
+  override_resource {
+    target          = module.lambda_function[0].module.lambda_function.aws_lambda_function.this[0]
+    override_during = plan
+    values = {
+      arn = "arn:aws:lambda:eu-west-2:123456789012:function:tagging-compliance-compliance-tagging"
+    }
+  }
+
+  override_data {
+    target = data.aws_s3_objects.inventory[0]
+    values = {
+      keys = ["accounts.yaml"]
+    }
+  }
+
+  override_data {
+    target = data.aws_s3_object.inventory[0]
+    values = {
+      metadata = {
+        "content-sha256" = "inventory-hash"
+      }
+    }
+  }
+
+  assert {
+    condition = {
+      for p in aws_config_conformance_pack.tagging[0].input_parameter : p.parameter_name => p.parameter_value
+      } == {
+      PolicyVersion    = "policy-hash"
+      MappingsVersion  = "mappings-hash"
+      InventoryVersion = "inventory-hash"
+    }
+    error_message = "The account-level pack must pass the inventory version too"
   }
 }
 

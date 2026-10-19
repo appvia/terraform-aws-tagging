@@ -1,8 +1,8 @@
 # The version parameters carry content hashes only; changing any of them updates the
 # rule and forces AWS Config to re-evaluate every in-scope resource. PolicyVersion and
-# MappingsVersion are set by Terraform. InventoryVersion is set by the organizations
-# lambda when the account inventory changes; a later terraform apply resetting it to
-# "none" is harmless (it only triggers another re-evaluation).
+# MappingsVersion are set by Terraform. InventoryVersion is the content-sha256 of the
+# account inventory: the organizations lambda sets it when the inventory changes and
+# Terraform reads the same value from the object metadata, so the two never disagree.
 Parameters:
   PolicyVersion:
     Type: String
