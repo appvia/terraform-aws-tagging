@@ -36,6 +36,10 @@ variable "organizations" {
     conformance_pack_name = optional(string)
     ## The S3 URI of the conformance pack template (pack module output s3_template_uri).
     conformance_pack_template_uri = optional(string)
+    ## Trigger the sync on account create, close, move, tag and untag events. Organizations CloudTrail
+    ## events are delivered to EventBridge only in us-east-1, so the module must be deployed in
+    ## us-east-1 for this trigger to fire; elsewhere only the scheduled sync runs.
+    enable_account_event_sync = optional(bool, true)
     lambda = optional(object({
       ## The description of the Lambda function to handle AWS Organization account movements.
       description = optional(string, "Handles AWS Organization account movements for tagging compliance.")

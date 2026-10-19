@@ -271,6 +271,28 @@ run "organizations_with_conformance_pack" {
     condition     = output.accounts_key == "accounts.yaml"
     error_message = "accounts_key must be accounts.yaml when organizations is enabled"
   }
+
+  assert {
+    condition = jsondecode(module.organizations_handler[0].account_event_pattern).detail.eventName == [
+      "CreateAccount", "CloseAccount", "MoveAccount", "TagResource", "UntagResource",
+    ]
+    error_message = "The account event rule must exist by default and match create, close, move, tag and untag events"
+  }
+}
+
+run "organizations_account_events_disabled" {
+  command = plan
+
+  variables {
+    organizations = {
+      enable_account_event_sync = false
+    }
+  }
+
+  assert {
+    condition     = module.organizations_handler[0].account_event_pattern == null
+    error_message = "The account event rule must not be created when enable_account_event_sync is false"
+  }
 }
 
 run "organizations_module_events_and_permissions" {
@@ -325,15 +347,37 @@ run "organizations_module_events_and_permissions" {
     condition = anytrue([
       for s in data.aws_iam_policy_document.permissions.statement : toset(s.actions) == toset([
         "config:DescribeOrganizationConformancePacks",
-        "config:PutOrganizationConformancePack",
         "organizations:DescribeOrganization",
-        "organizations:EnableAWSServiceAccess",
         "organizations:ListAccounts",
         "organizations:ListDelegatedAdministrators",
-        "organizations:RegisterDelegatedAdministrator",
+      ]) && toset(s.resources) == toset(["*"])
+    ])
+    error_message = "The lambda must be granted the read permissions PutOrganizationConformancePack needs"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.permissions.statement : toset(s.actions) == toset(["config:PutOrganizationConformancePack"]) && toset(s.resources) == toset([
+        "arn:aws:config:*:123456789012:organization-conformance-pack/tagging-compliance-*",
       ])
     ])
-    error_message = "The lambda must be granted the PutOrganizationConformancePack permissions"
+    error_message = "config:PutOrganizationConformancePack must be scoped to the named organization conformance pack"
+  }
+
+  assert {
+    condition = anytrue(flatten([
+      for s in data.aws_iam_policy_document.permissions.statement : [
+        for c in coalesce(s.condition, []) : toset(s.actions) == toset(["organizations:EnableAWSServiceAccess"]) && c.test == "StringEquals" && c.variable == "organizations:ServicePrincipal" && toset(c.values) == toset(["config-multiaccountsetup.amazonaws.com"])
+      ]
+    ]))
+    error_message = "organizations:EnableAWSServiceAccess must be conditioned on the config-multiaccountsetup service principal"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.permissions.statement : !contains(s.actions, "organizations:RegisterDelegatedAdministrator")
+    ])
+    error_message = "organizations:RegisterDelegatedAdministrator must not be granted"
   }
 
   assert {
@@ -367,13 +411,13 @@ run "organizations_module_without_conformance_pack" {
 
   assert {
     condition = alltrue([
-      for s in data.aws_iam_policy_document.permissions.statement : !anytrue([for a in s.actions : startswith(a, "config:") || startswith(a, "iam:")])
+      for s in data.aws_iam_policy_document.permissions.statement : !anytrue([for a in s.actions : startswith(a, "config:") || startswith(a, "iam:") || a == "organizations:EnableAWSServiceAccess"])
     ])
     error_message = "No conformance pack permissions must be granted without a conformance pack name"
   }
 
   assert {
-    condition     = length(aws_cloudwatch_event_rule.account_events) == 0
-    error_message = "The account event rule must be disabled by default"
+    condition     = length(aws_cloudwatch_event_rule.account_events) == 1
+    error_message = "The account event rule must be enabled by default"
   }
 }

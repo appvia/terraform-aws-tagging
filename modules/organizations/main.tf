@@ -44,25 +44,53 @@ data "aws_iam_policy_document" "permissions" {
   ## the call enables service access for config-multiaccountsetup.amazonaws.com
   ## (organizations:EnableAWSServiceAccess), creates the AWSServiceRoleForConfigMultiAccountSetup
   ## service-linked role when missing (iam:GetRole / iam:CreateServiceLinkedRole), needs
-  ## ListDelegatedAdministrators (and RegisterDelegatedAdministrator for delegated admin setups),
-  ## reads the organization and its accounts, and the caller must be able to read the template
-  ## object in S3.
+  ## ListDelegatedAdministrators, reads the organization and its accounts, and the caller must be
+  ## able to read the template object in S3. Registering a delegated administrator is a one-time
+  ## setup step and is deliberately not granted.
   dynamic "statement" {
     for_each = var.conformance_pack_name != null ? [1] : []
 
     content {
-      sid    = "AllowConformancePackUpdate"
+      sid    = "AllowConformancePackRead"
       effect = "Allow"
       actions = [
         "config:DescribeOrganizationConformancePacks",
-        "config:PutOrganizationConformancePack",
         "organizations:DescribeOrganization",
-        "organizations:EnableAWSServiceAccess",
         "organizations:ListAccounts",
         "organizations:ListDelegatedAdministrators",
-        "organizations:RegisterDelegatedAdministrator",
       ]
       resources = ["*"]
+    }
+  }
+
+  ## The organization conformance pack ARN carries a random suffix after the name
+  dynamic "statement" {
+    for_each = var.conformance_pack_name != null ? [1] : []
+
+    content {
+      sid     = "AllowConformancePackUpdate"
+      effect  = "Allow"
+      actions = ["config:PutOrganizationConformancePack"]
+      resources = [
+        format("arn:%s:config:*:%s:organization-conformance-pack/%s-*", data.aws_partition.current.partition, data.aws_caller_identity.current.account_id, var.conformance_pack_name),
+      ]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.conformance_pack_name != null ? [1] : []
+
+    content {
+      sid       = "AllowConformancePackServiceAccess"
+      effect    = "Allow"
+      actions   = ["organizations:EnableAWSServiceAccess"]
+      resources = ["*"]
+
+      condition {
+        test     = "StringEquals"
+        variable = "organizations:ServicePrincipal"
+        values   = ["config-multiaccountsetup.amazonaws.com"]
+      }
     }
   }
 

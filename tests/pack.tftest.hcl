@@ -200,6 +200,41 @@ run "account_pack_with_inventory" {
   }
 }
 
+## Bootstrap: the policy bucket is created in the same configuration, so the inventory
+## version is pinned and the S3 data sources must not be read
+run "organization_pack_inventory_version_pinned" {
+  command = plan
+
+  module {
+    source = "./modules/pack"
+  }
+
+  variables {
+    accounts_key      = "accounts.yaml"
+    inventory_version = "none"
+  }
+
+  override_resource {
+    target          = module.lambda_function[0].module.lambda_function.aws_lambda_function.this[0]
+    override_during = plan
+    values = {
+      arn = "arn:aws:lambda:eu-west-2:123456789012:function:tagging-compliance-compliance-tagging"
+    }
+  }
+
+  assert {
+    condition     = length(data.aws_s3_objects.inventory) == 0 && length(data.aws_s3_object.inventory) == 0
+    error_message = "No S3 data sources must be read when inventory_version is set"
+  }
+
+  assert {
+    condition = {
+      for p in aws_config_organization_conformance_pack.tagging[0].input_parameter : p.parameter_name => p.parameter_value
+    }["InventoryVersion"] == "none"
+    error_message = "InventoryVersion must be the pinned inventory_version"
+  }
+}
+
 run "external_lambda" {
   command = plan
 

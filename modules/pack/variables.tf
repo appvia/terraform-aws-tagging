@@ -52,6 +52,12 @@ variable "input_parameters" {
   default     = {}
 }
 
+variable "inventory_version" {
+  description = "Pin the InventoryVersion pack parameter instead of reading the content-sha256 metadata of the inventory object. When set, no S3 data sources are read. Bootstrap: pass \"none\" on the first apply when the policy bucket is created in the same configuration (the bucket does not exist at plan time), then remove it so the version follows the inventory."
+  type        = string
+  default     = null
+}
+
 variable "kms_key_arn" {
   description = "The ARN of the KMS key encrypting the policy bucket. When set, the lambda is granted kms:Decrypt on it."
   type        = string

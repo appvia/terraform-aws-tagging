@@ -56,9 +56,9 @@ variable "conformance_pack_template_uri" {
 }
 
 variable "enable_account_event_sync" {
-  description = "Enable an EventBridge rule to trigger the sync on account create, close, move, tag and untag events (Organizations CloudTrail events are delivered to EventBridge in us-east-1 only)."
+  description = "Enable an EventBridge rule to trigger the sync on account create, close, move, tag and untag events. Organizations CloudTrail events are delivered to EventBridge only in us-east-1, so the module must be deployed in us-east-1 for this trigger to fire; elsewhere only the scheduled sync runs."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_scheduled_sync" {

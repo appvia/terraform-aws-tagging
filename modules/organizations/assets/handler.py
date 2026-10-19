@@ -5,8 +5,9 @@ This function is invoked on a schedule and on Organizations account events
 (create, close, move, tag, untag) to write the account inventory -- account
 names, organizational paths, status and account tags -- to a single YAML
 object (accounts.yaml) in the policy bucket. The object is only rewritten when
-its content changes; when it does and a conformance pack name is configured,
-the organization conformance pack is re-put with a new InventoryVersion so
+its content changes. When a conformance pack name is configured, the
+organization conformance pack is reconciled on every run: it is re-put
+whenever its InventoryVersion differs from the inventory's content sha256, so
 AWS Config re-evaluates every account against the new inventory.
 """
 
@@ -368,20 +369,26 @@ def store_inventory(bucket: str, key: str, body: str) -> bool:
     return True
 
 
-def bump_conformance_pack(name: str, version: str, template_uri: str) -> None:
+def bump_conformance_pack(name: str, version: str, template_uri: str) -> bool:
     """
-    Re-put the organization conformance pack with a new InventoryVersion.
+    Reconcile the organization conformance pack's InventoryVersion.
 
-    Changing an input parameter makes AWS Config redeploy the pack and
-    re-evaluate every in-scope resource in every member account. The existing
-    input parameters, excluded accounts and delivery settings are preserved.
-    DescribeOrganizationConformancePacks does not return the template
-    location, so the template URI is supplied by the caller.
+    The pack is described on every call and re-put only when its current
+    InventoryVersion differs from the given version, so a re-put that failed
+    on an earlier run (after the inventory was written) is retried on the
+    next run. Changing an input parameter makes AWS Config redeploy the pack
+    and re-evaluate every in-scope resource in every member account. The
+    existing input parameters, excluded accounts and delivery settings are
+    preserved. DescribeOrganizationConformancePacks does not return the
+    template location, so the template URI is supplied by the caller.
 
     Args:
         name: The name of the organization conformance pack
-        version: The new InventoryVersion (the inventory content sha256)
+        version: The desired InventoryVersion (the inventory content sha256)
         template_uri: The S3 URI of the conformance pack template
+
+    Returns:
+        True if the pack was re-put, False if it was current or not found
     """
 
     try:
@@ -402,8 +409,27 @@ def bump_conformance_pack(name: str, version: str, template_uri: str) -> None:
             "Organization conformance pack not found, skipping re-evaluation",
             extra={"action": "bump_conformance_pack", "conformance_pack": name},
         )
-        return
+        return False
     pack = packs[0]
+
+    current = next(
+        (
+            p.get("ParameterValue")
+            for p in pack.get("ConformancePackInputParameters", [])
+            if p.get("ParameterName") == INVENTORY_PARAMETER
+        ),
+        None,
+    )
+    if current == version:
+        logger.info(
+            "Organization conformance pack inventory version is current",
+            extra={
+                "action": "bump_conformance_pack",
+                "conformance_pack": name,
+                "inventory_version": version,
+            },
+        )
+        return False
 
     parameters = [
         p
@@ -428,9 +454,12 @@ def bump_conformance_pack(name: str, version: str, template_uri: str) -> None:
         extra={
             "action": "bump_conformance_pack",
             "conformance_pack": name,
+            "previous_inventory_version": current,
             "inventory_version": version,
         },
     )
+
+    return True
 
 
 # Default logger for all log messages in this module, configured to emit JSON-formatted logs to stdout.
@@ -529,10 +558,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Retrieve all accounts with their details and render the inventory
         accounts = list_accounts_with_details(build_ou_map())
         body = render_inventory(accounts)
-        # Only rewrite the inventory (and re-evaluate) when the content changed
+        # Only rewrite the inventory when the content changed
         changed = store_inventory(bucket, key, body)
 
-        if changed and pack_name:
+        # Reconcile the pack on every run (not only on write), so a re-put that
+        # failed after an earlier write is retried; it is a no-op when current
+        if pack_name:
             if template_uri:
                 bump_conformance_pack(pack_name, content_sha256(body), template_uri)
             else:

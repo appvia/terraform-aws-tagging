@@ -9,6 +9,7 @@ module "organizations_handler" {
   bucket_name                   = aws_s3_bucket.policy.id
   conformance_pack_name         = var.organizations.conformance_pack_name
   conformance_pack_template_uri = var.organizations.conformance_pack_template_uri
+  enable_account_event_sync     = var.organizations.enable_account_event_sync
   kms_key_arn                   = var.bucket.kms_key_arn
   lambda_description            = var.organizations.lambda.description
   lambda_log_level              = var.organizations.lambda.log_level

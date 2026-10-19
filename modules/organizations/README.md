@@ -270,7 +270,7 @@ The Lambda function requires the following IAM permissions:
 | <a name="input_cloudwatch_logs_retention_in_days"></a> [cloudwatch\_logs\_retention\_in\_days](#input\_cloudwatch\_logs\_retention\_in\_days) | The number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827. | `number` | `7` | no |
 | <a name="input_conformance_pack_name"></a> [conformance\_pack\_name](#input\_conformance\_pack\_name) | The name of the organization conformance pack to re-put with a new InventoryVersion when the inventory changes, forcing an org-wide re-evaluation. Requires conformance\_pack\_template\_uri. When null, no re-evaluation is triggered. | `string` | `null` | no |
 | <a name="input_conformance_pack_template_uri"></a> [conformance\_pack\_template\_uri](#input\_conformance\_pack\_template\_uri) | The S3 URI (s3://bucket/key) of the conformance pack template (pack module output s3\_template\_uri). Required with conformance\_pack\_name because DescribeOrganizationConformancePacks does not return the template location. | `string` | `null` | no |
-| <a name="input_enable_account_event_sync"></a> [enable\_account\_event\_sync](#input\_enable\_account\_event\_sync) | Enable an EventBridge rule to trigger the sync on account create, close, move, tag and untag events (Organizations CloudTrail events are delivered to EventBridge in us-east-1 only). | `bool` | `false` | no |
+| <a name="input_enable_account_event_sync"></a> [enable\_account\_event\_sync](#input\_enable\_account\_event\_sync) | Enable an EventBridge rule to trigger the sync on account create, close, move, tag and untag events. Organizations CloudTrail events are delivered to EventBridge only in us-east-1, so the module must be deployed in us-east-1 for this trigger to fire; elsewhere only the scheduled sync runs. | `bool` | `true` | no |
 | <a name="input_enable_scheduled_sync"></a> [enable\_scheduled\_sync](#input\_enable\_scheduled\_sync) | Enable a scheduled EventBridge rule to trigger the sync periodically. | `bool` | `true` | no |
 | <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | The ARN of the KMS key encrypting the bucket. When set, the lambda is granted kms:Decrypt and kms:GenerateDataKey on it. | `string` | `null` | no |
 | <a name="input_lambda_description"></a> [lambda\_description](#input\_lambda\_description) | The description of the Lambda function to synchronize AWS Organizations account information. | `string` | `"Synchronizes AWS Organizations account information to S3."` | no |
@@ -287,6 +287,7 @@ The Lambda function requires the following IAM permissions:
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_account_event_pattern"></a> [account\_event\_pattern](#output\_account\_event\_pattern) | The EventBridge event pattern of the account event rule, or null when the account event sync is disabled. |
 | <a name="output_lambda_arn"></a> [lambda\_arn](#output\_lambda\_arn) | The ARN of the Lambda function for tagging compliance. |
 | <a name="output_lambda_name"></a> [lambda\_name](#output\_lambda\_name) | The name of the Lambda function for tagging compliance. |
 <!-- END_TF_DOCS -->

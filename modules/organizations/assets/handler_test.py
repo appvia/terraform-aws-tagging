@@ -432,6 +432,38 @@ class TestBumpConformancePack:
     """Tests for bump_conformance_pack function."""
 
     @patch("handler.config_client")
+    def test_bump_pack_skips_when_current(self, mock_config):
+        mock_config.describe_organization_conformance_packs.return_value = {
+            "OrganizationConformancePacks": [
+                {
+                    "OrganizationConformancePackName": "tagging-compliance",
+                    "ConformancePackInputParameters": [
+                        {"ParameterName": "InventoryVersion", "ParameterValue": "same"},
+                    ],
+                }
+            ]
+        }
+
+        assert (
+            handler.bump_conformance_pack("tagging-compliance", "same", TEMPLATE_URI)
+            is False
+        )
+        mock_config.put_organization_conformance_pack.assert_not_called()
+
+    @patch("handler.config_client")
+    def test_bump_pack_returns_true_when_reput(self, mock_config):
+        mock_config.describe_organization_conformance_packs.return_value = {
+            "OrganizationConformancePacks": [
+                {"OrganizationConformancePackName": "tagging-compliance"}
+            ]
+        }
+
+        assert (
+            handler.bump_conformance_pack("tagging-compliance", "new", TEMPLATE_URI)
+            is True
+        )
+
+    @patch("handler.config_client")
     def test_bump_pack_preserves_parameters(self, mock_config):
         mock_config.describe_organization_conformance_packs.return_value = {
             "OrganizationConformancePacks": [
@@ -533,42 +565,98 @@ PACK_ENV = dict(
 )
 
 
+def _pack_with_inventory_version(version):
+    """A describe_organization_conformance_packs response with the given InventoryVersion."""
+    return {
+        "OrganizationConformancePacks": [
+            {
+                "OrganizationConformancePackName": "tagging-compliance",
+                "ConformancePackInputParameters": [
+                    {"ParameterName": "PolicyVersion", "ParameterValue": "p1"},
+                    {"ParameterName": "InventoryVersion", "ParameterValue": version},
+                ],
+            }
+        ]
+    }
+
+
 class TestLambdaHandler:
     """Tests for the main lambda_handler function."""
 
     @patch.dict(os.environ, PACK_ENV, clear=True)
-    @patch("handler.bump_conformance_pack")
+    @patch("handler.config_client")
     @patch("handler.store_inventory", return_value=True)
     @patch("handler.list_accounts_with_details")
     @patch("handler.build_ou_map", return_value={})
-    def test_handler_bumps_pack_on_change(
-        self, _ou, mock_list, mock_store, mock_bump, mock_context, fixture_accounts
+    def test_handler_changed_content_writes_and_reputs(
+        self, _ou, mock_list, mock_store, mock_config, mock_context, fixture_accounts
     ):
         mock_list.return_value = fixture_accounts
+        mock_config.describe_organization_conformance_packs.return_value = (
+            _pack_with_inventory_version("old")
+        )
 
         result = handler.lambda_handler({}, mock_context)
 
         body = handler.render_inventory(fixture_accounts)
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         assert result == {"status": "ok", "account_count": 2, "changed": True}
         mock_store.assert_called_once_with("tagging-compliance", "accounts.yaml", body)
-        mock_bump.assert_called_once_with(
-            "tagging-compliance",
-            hashlib.sha256(body.encode("utf-8")).hexdigest(),
-            TEMPLATE_URI,
-        )
+        kwargs = mock_config.put_organization_conformance_pack.call_args.kwargs
+        assert kwargs["TemplateS3Uri"] == TEMPLATE_URI
+        assert {
+            "ParameterName": "InventoryVersion",
+            "ParameterValue": digest,
+        } in kwargs["ConformancePackInputParameters"]
 
     @patch.dict(os.environ, PACK_ENV, clear=True)
-    @patch("handler.bump_conformance_pack")
+    @patch("handler.config_client")
     @patch("handler.store_inventory", return_value=False)
-    @patch("handler.list_accounts_with_details", return_value=[])
+    @patch("handler.list_accounts_with_details")
     @patch("handler.build_ou_map", return_value={})
-    def test_handler_no_bump_when_unchanged(
-        self, _ou, _list, _store, mock_bump, mock_context
+    def test_handler_unchanged_content_stale_pack_reputs(
+        self, _ou, mock_list, _store, mock_config, mock_context, fixture_accounts
     ):
+        """A previous run wrote S3 but failed to re-put the pack: reconcile now."""
+        mock_list.return_value = fixture_accounts
+        mock_config.describe_organization_conformance_packs.return_value = (
+            _pack_with_inventory_version("stale")
+        )
+
         result = handler.lambda_handler({}, mock_context)
 
-        assert result == {"status": "ok", "account_count": 0, "changed": False}
-        mock_bump.assert_not_called()
+        digest = hashlib.sha256(
+            handler.render_inventory(fixture_accounts).encode("utf-8")
+        ).hexdigest()
+        assert result["changed"] is False
+        mock_config.put_organization_conformance_pack.assert_called_once()
+        kwargs = mock_config.put_organization_conformance_pack.call_args.kwargs
+        assert {
+            "ParameterName": "InventoryVersion",
+            "ParameterValue": digest,
+        } in kwargs["ConformancePackInputParameters"]
+
+    @patch.dict(os.environ, PACK_ENV, clear=True)
+    @patch("handler.config_client")
+    @patch("handler.store_inventory", return_value=False)
+    @patch("handler.list_accounts_with_details")
+    @patch("handler.build_ou_map", return_value={})
+    def test_handler_unchanged_content_current_pack_no_reput(
+        self, _ou, mock_list, _store, mock_config, mock_context, fixture_accounts
+    ):
+        mock_list.return_value = fixture_accounts
+        digest = hashlib.sha256(
+            handler.render_inventory(fixture_accounts).encode("utf-8")
+        ).hexdigest()
+        mock_config.describe_organization_conformance_packs.return_value = (
+            _pack_with_inventory_version(digest)
+        )
+
+        result = handler.lambda_handler({}, mock_context)
+
+        assert result["changed"] is False
+        mock_config.describe_organization_conformance_packs.assert_called_once()
+        mock_config.put_organization_conformance_pack.assert_not_called()
 
     @patch.dict(os.environ, ENV, clear=True)
     @patch("handler.bump_conformance_pack")
