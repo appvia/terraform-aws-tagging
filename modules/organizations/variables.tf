@@ -38,8 +38,25 @@ variable "cloudwatch_logs_retention_in_days" {
   default     = 7
 }
 
+variable "conformance_pack_name" {
+  description = "The name of the organization conformance pack to re-put with a new InventoryVersion when the inventory changes, forcing an org-wide re-evaluation. Requires conformance_pack_template_uri. When null, no re-evaluation is triggered."
+  type        = string
+  default     = null
+}
+
+variable "conformance_pack_template_uri" {
+  description = "The S3 URI (s3://bucket/key) of the conformance pack template (pack module output s3_template_uri). Required with conformance_pack_name because DescribeOrganizationConformancePacks does not return the template location."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.conformance_pack_template_uri == null || can(regex("^s3://[^/]+/.+$", var.conformance_pack_template_uri))
+    error_message = "conformance_pack_template_uri must be an S3 URI of the form s3://bucket/key."
+  }
+}
+
 variable "enable_account_event_sync" {
-  description = "Enable an EventBridge rule to trigger the sync on account creation/closure events."
+  description = "Enable an EventBridge rule to trigger the sync on account create, close, move, tag and untag events (Organizations CloudTrail events are delivered to EventBridge in us-east-1 only)."
   type        = bool
   default     = false
 }

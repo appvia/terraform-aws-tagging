@@ -31,8 +31,11 @@ variable "mappings" {
 variable "organizations" {
   description = "Configuration for the organizations inventory lambda. When null, no account inventory is maintained."
   type = object({
-    ## The name of the conformance pack to re-put when the inventory changes (wired by the organizations handler).
+    ## The name of the organization conformance pack to re-put with a new InventoryVersion when the
+    ## inventory changes (forces an org-wide re-evaluation). Requires conformance_pack_template_uri.
     conformance_pack_name = optional(string)
+    ## The S3 URI of the conformance pack template (pack module output s3_template_uri).
+    conformance_pack_template_uri = optional(string)
     lambda = optional(object({
       ## The description of the Lambda function to handle AWS Organization account movements.
       description = optional(string, "Handles AWS Organization account movements for tagging compliance.")

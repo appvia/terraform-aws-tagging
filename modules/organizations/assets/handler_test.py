@@ -3,19 +3,37 @@ Unit tests for the AWS Organizations account inventory Lambda handler.
 
 Tests cover:
 - Organization unit hierarchy building
-- Account alias retrieval
+- Account tag retrieval (paginated)
 - Account details retrieval
-- DynamoDB storage operations
+- Deterministic YAML inventory rendering
+- Conditional S3 write of the inventory (content sha256)
+- Re-putting the organization conformance pack with a new InventoryVersion
 - Lambda handler integration
 """
 
-import json
+import hashlib
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
+from botocore.exceptions import ClientError
 
 import handler
+
+## The shared inventory fixture parsed by the validation lambda (store.parse_inventory)
+SHARED_FIXTURE = (
+    Path(__file__).parent
+    / ".."
+    / ".."
+    / "validation"
+    / "assets"
+    / "testdata"
+    / "accounts.yaml"
+)
+
+TEMPLATE_URI = "s3://tagging-conformance-pack/conformance-packs/tagging-compliance.yaml"
 
 # ============================================================================
 # Fixtures
@@ -34,6 +52,27 @@ def sample_account_info():
 
 
 @pytest.fixture
+def fixture_accounts():
+    """AccountInfo objects equivalent to the shared inventory fixture."""
+    return [
+        handler.AccountInfo(
+            AccountId="234567890123",
+            AccountName="dev",
+            OUPath="root/workloads/dev",
+            Status="ACTIVE",
+            Tags={},
+        ),
+        handler.AccountInfo(
+            AccountId="123456789012",
+            AccountName="prod",
+            OUPath="root/workloads/prod",
+            Status="ACTIVE",
+            Tags={"Environment": "production", "CostCentre": "42"},
+        ),
+    ]
+
+
+@pytest.fixture
 def sample_ou_map():
     """A sample organizational unit hierarchy map."""
     return {
@@ -45,35 +84,15 @@ def sample_ou_map():
 
 
 @pytest.fixture
-def sample_organizations_response():
-    """Sample response from Organizations API for list_accounts."""
-    return {
-        "Accounts": [
-            {
-                "Id": "123456789012",
-                "Name": "Production Account",
-                "Status": "ACTIVE",
-            },
-            {
-                "Id": "210987654321",
-                "Name": "Development Account",
-                "Status": "ACTIVE",
-            },
-            {
-                "Id": "111222333444",
-                "Name": "Suspended Account",
-                "Status": "SUSPENDED",
-            },
-        ]
-    }
-
-
-@pytest.fixture
 def mock_context():
     """Mock Lambda context object."""
     context = MagicMock()
     context.aws_request_id = "test-request-id-12345"
     return context
+
+
+def _client_error(code, operation="HeadObject"):
+    return ClientError({"Error": {"Code": code, "Message": code}}, operation)
 
 
 # ============================================================================
@@ -85,22 +104,15 @@ class TestAccountInfo:
     """Tests for the AccountInfo dataclass."""
 
     def test_account_info_creation(self, sample_account_info):
-        """Test creating an AccountInfo object."""
         assert sample_account_info.AccountId == "123456789012"
         assert sample_account_info.AccountName == "Production Account"
         assert sample_account_info.OUPath == "root/engineering/platform"
         assert sample_account_info.Status == "ACTIVE"
-        assert sample_account_info.LastUpdated is not None
+        assert sample_account_info.Tags == {}
 
-    def test_account_info_default_values(self):
-        """Test AccountInfo with default values."""
-        account = handler.AccountInfo(
-            AccountId="123456789012",
-            AccountName="Test Account",
-            OUPath="root",
-            Status="ACTIVE",
-        )
-        assert account.LastUpdated is not None
+    def test_account_info_has_no_last_updated(self, sample_account_info):
+        """The timestamp moved to the S3 object metadata (generated-at)."""
+        assert not hasattr(sample_account_info, "LastUpdated")
 
 
 # ============================================================================
@@ -112,29 +124,22 @@ class TestParseOUPath:
     """Tests for parse_ou_path function."""
 
     def test_parse_ou_path_deep_hierarchy(self, sample_ou_map):
-        """Test parsing OU path for deeply nested organizational unit."""
-        path = handler.parse_ou_path("ou-2222", sample_ou_map)
-        assert path == "root/engineering/platform"
+        assert (
+            handler.parse_ou_path("ou-2222", sample_ou_map)
+            == "root/engineering/platform"
+        )
 
     def test_parse_ou_path_single_level(self, sample_ou_map):
-        """Test parsing OU path for single level OU."""
-        path = handler.parse_ou_path("ou-1111", sample_ou_map)
-        assert path == "root/engineering"
+        assert handler.parse_ou_path("ou-1111", sample_ou_map) == "root/engineering"
 
     def test_parse_ou_path_root(self, sample_ou_map):
-        """Test parsing OU path for root."""
-        path = handler.parse_ou_path("r-1234", sample_ou_map)
-        assert path == "root"
+        assert handler.parse_ou_path("r-1234", sample_ou_map) == "root"
 
     def test_parse_ou_path_nonexistent_ou(self, sample_ou_map):
-        """Test parsing OU path for nonexistent OU returns root."""
-        path = handler.parse_ou_path("ou-nonexistent", sample_ou_map)
-        assert path == "root"
+        assert handler.parse_ou_path("ou-nonexistent", sample_ou_map) == "root"
 
     def test_parse_ou_path_empty_map(self):
-        """Test parsing OU path with empty map."""
-        path = handler.parse_ou_path("ou-1111", {})
-        assert path == "root"
+        assert handler.parse_ou_path("ou-1111", {}) == "root"
 
 
 # ============================================================================
@@ -147,17 +152,12 @@ class TestBuildOUMap:
 
     @patch("handler.organizations_client")
     def test_build_ou_map_success(self, mock_org_client):
-        """Test successfully building organizational unit map."""
-        # Mock list_roots
         mock_org_client.list_roots.return_value = {
             "Roots": [{"Id": "r-1234", "Name": "root"}]
         }
-
-        # Mock paginator for OUs
         mock_paginator = MagicMock()
         mock_org_client.get_paginator.return_value = mock_paginator
 
-        # Mock paginate responses
         def paginate_side_effect(ParentId):
             if ParentId == "r-1234":
                 return iter(
@@ -170,36 +170,61 @@ class TestBuildOUMap:
                         }
                     ]
                 )
-            elif ParentId == "ou-1111":
+            if ParentId == "ou-1111":
                 return iter(
-                    [
-                        {
-                            "OrganizationalUnits": [
-                                {"Id": "ou-2222", "Name": "platform"},
-                            ]
-                        }
-                    ]
+                    [{"OrganizationalUnits": [{"Id": "ou-2222", "Name": "platform"}]}]
                 )
-            else:
-                return iter([{"OrganizationalUnits": []}])
+            return iter([{"OrganizationalUnits": []}])
 
         mock_paginator.paginate.side_effect = paginate_side_effect
 
         ou_map = handler.build_ou_map()
 
-        assert "r-1234" in ou_map
-        assert ou_map["r-1234"]["name"] == "root"
-        assert ou_map["r-1234"]["parent_id"] is None
-        assert "ou-1111" in ou_map
+        assert ou_map["r-1234"] == {"name": "root", "parent_id": None}
+        assert ou_map["ou-2222"] == {"name": "platform", "parent_id": "ou-1111"}
         assert "ou-3333" in ou_map
 
     @patch("handler.organizations_client")
     def test_build_ou_map_organizations_error(self, mock_org_client):
-        """Test build_ou_map handles Organizations API errors."""
         mock_org_client.list_roots.side_effect = Exception("API Error")
 
         with pytest.raises(Exception, match="API Error"):
             handler.build_ou_map()
+
+
+# ============================================================================
+# Tests for list_account_tags function
+# ============================================================================
+
+
+class TestListAccountTags:
+    """Tests for list_account_tags function."""
+
+    @patch("handler.organizations_client")
+    def test_list_account_tags_paginates(self, mock_org_client):
+        """Two pages of tags are merged into a single map."""
+        mock_paginator = MagicMock()
+        mock_org_client.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = iter(
+            [
+                {"Tags": [{"Key": "Environment", "Value": "production"}]},
+                {"Tags": [{"Key": "CostCentre", "Value": "42"}]},
+            ]
+        )
+
+        tags = handler.list_account_tags("123456789012")
+
+        assert tags == {"Environment": "production", "CostCentre": "42"}
+        mock_org_client.get_paginator.assert_called_once_with("list_tags_for_resource")
+        mock_paginator.paginate.assert_called_once_with(ResourceId="123456789012")
+
+    @patch("handler.organizations_client")
+    def test_list_account_tags_empty(self, mock_org_client):
+        mock_paginator = MagicMock()
+        mock_org_client.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = iter([{"Tags": []}])
+
+        assert handler.list_account_tags("123456789012") == {}
 
 
 # ============================================================================
@@ -210,9 +235,11 @@ class TestBuildOUMap:
 class TestListAccountsWithDetails:
     """Tests for list_accounts_with_details function."""
 
+    @patch("handler.list_account_tags")
     @patch("handler.organizations_client")
-    def test_list_accounts_with_details_success(self, mock_org_client, sample_ou_map):
-        """Test successfully listing accounts with details."""
+    def test_list_accounts_with_details_success(
+        self, mock_org_client, mock_tags, sample_ou_map
+    ):
         mock_paginator = MagicMock()
         mock_org_client.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [
@@ -223,46 +250,42 @@ class TestListAccountsWithDetails:
                 ]
             }
         ]
-
         mock_org_client.list_parents.side_effect = [
-            {"Parents": [{"Id": "ou-2222"}]},  # For first account
-            {"Parents": [{"Id": "ou-1111"}]},  # For second account
+            {"Parents": [{"Id": "ou-2222"}]},
+            {"Parents": [{"Id": "ou-1111"}]},
         ]
+        mock_tags.side_effect = [{"Environment": "production"}, {}]
 
         accounts = handler.list_accounts_with_details(sample_ou_map)
 
         assert len(accounts) == 2
         assert accounts[0].AccountId == "123456789012"
-        assert accounts[0].AccountName == "Production"
         assert accounts[0].OUPath == "root/engineering/platform"
-        assert accounts[1].AccountId == "210987654321"
+        assert accounts[0].Tags == {"Environment": "production"}
         assert accounts[1].AccountName == "Development"
+        assert accounts[1].OUPath == "root/engineering"
+        assert accounts[1].Tags == {}
 
+    @patch("handler.list_account_tags", return_value={})
     @patch("handler.organizations_client")
-    def test_list_accounts_with_details_no_parent(self, mock_org_client, sample_ou_map):
-        """Test listing accounts when no parent OU is found."""
+    def test_list_accounts_with_details_no_parent(
+        self, mock_org_client, _mock_tags, sample_ou_map
+    ):
         mock_paginator = MagicMock()
         mock_org_client.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [
-            {
-                "Accounts": [
-                    {"Id": "123456789012", "Name": "Orphan Account", "Status": "ACTIVE"}
-                ]
-            }
+            {"Accounts": [{"Id": "123456789012", "Name": "Orphan", "Status": "ACTIVE"}]}
         ]
-
         mock_org_client.list_parents.return_value = {"Parents": []}
 
         accounts = handler.list_accounts_with_details(sample_ou_map)
 
-        assert len(accounts) == 1
         assert accounts[0].OUPath == "root"
 
     @patch("handler.organizations_client")
     def test_list_accounts_with_details_organizations_error(
         self, mock_org_client, sample_ou_map
     ):
-        """Test list_accounts_with_details handles Organizations API errors."""
         mock_org_client.get_paginator.side_effect = Exception("API Error")
 
         with pytest.raises(Exception, match="API Error"):
@@ -270,380 +293,320 @@ class TestListAccountsWithDetails:
 
 
 # ============================================================================
-# Tests for store_accounts_in_dynamodb function
+# Tests for render_inventory function
 # ============================================================================
 
 
-class TestStoreAccountsInDynamoDB:
-    """Tests for store_accounts_in_dynamodb function."""
+class TestRenderInventory:
+    """Tests for render_inventory function."""
 
-    @patch("handler.dynamodb_client")
-    def test_store_accounts_in_dynamodb_success(
-        self, mock_dynamodb, sample_account_info
-    ):
-        """Test successfully storing accounts in DynamoDB."""
-        mock_dynamodb.put_item.return_value = {}
+    def test_render_inventory_deterministic(self, fixture_accounts):
+        """The same accounts in a different order render to an identical string."""
+        first = handler.render_inventory(fixture_accounts)
+        second = handler.render_inventory(list(reversed(fixture_accounts)))
 
-        accounts = [sample_account_info]
-        stored_count = handler.store_accounts_in_dynamodb(accounts, "test-table")
+        assert first == second
+        data = yaml.safe_load(first)
+        assert data["version"] == 1
+        assert list(data["accounts"].keys()) == ["123456789012", "234567890123"]
+        assert data["accounts"]["123456789012"] == {
+            "name": "prod",
+            "ou_path": "root/workloads/prod",
+            "status": "ACTIVE",
+            "tags": {"CostCentre": "42", "Environment": "production"},
+        }
 
-        assert stored_count == 1
-        mock_dynamodb.put_item.assert_called_once()
+    def test_render_inventory_quotes_account_ids(self):
+        """Account IDs (even with leading zeros) stay strings after a YAML round-trip."""
+        body = handler.render_inventory(
+            [
+                handler.AccountInfo(
+                    AccountId="012345678901",
+                    AccountName="zero",
+                    OUPath="root",
+                    Status="ACTIVE",
+                    Tags={"Count": "1", "Enabled": "yes"},
+                )
+            ]
+        )
+        data = yaml.safe_load(body)
 
-        # Verify the call arguments
-        call_args = mock_dynamodb.put_item.call_args[1]
-        assert call_args["TableName"] == "test-table"
-        assert call_args["Item"]["AccountId"]["S"] == "123456789012"
-        assert call_args["Item"]["AccountName"]["S"] == "Production Account"
-        assert call_args["Item"]["OUPath"]["S"] == "root/engineering/platform"
-        assert call_args["Item"]["Status"]["S"] == "ACTIVE"
+        assert list(data["accounts"].keys()) == ["012345678901"]
+        assert data["accounts"]["012345678901"]["tags"] == {
+            "Count": "1",
+            "Enabled": "yes",
+        }
 
-    @patch("handler.dynamodb_client")
-    def test_store_accounts_in_dynamodb_multiple(self, mock_dynamodb):
-        """Test storing multiple accounts in DynamoDB."""
-        mock_dynamodb.put_item.return_value = {}
-
-        accounts = [
+    def test_render_inventory_always_quotes_account_ids(self, fixture_accounts):
+        """IDs are quoted even when PyYAML would not need it (YAML 1.2 parsers read 0123... as int)."""
+        accounts = fixture_accounts + [
             handler.AccountInfo(
-                AccountId="123456789012",
-                AccountName="Production",
-                OUPath="root/prod",
+                AccountId="012345678901",
+                AccountName="zero",
+                OUPath="root",
                 Status="ACTIVE",
-            ),
-            handler.AccountInfo(
-                AccountId="210987654321",
-                AccountName="Development",
-                OUPath="root/dev",
-                Status="ACTIVE",
-            ),
+            )
         ]
+        body = handler.render_inventory(accounts)
 
-        stored_count = handler.store_accounts_in_dynamodb(accounts, "test-table")
+        for account_id in ("012345678901", "123456789012", "234567890123"):
+            assert f"'{account_id}':" in body
 
-        assert stored_count == 2
-        assert mock_dynamodb.put_item.call_count == 2
+    def test_render_inventory_has_no_timestamps(self, fixture_accounts):
+        body = handler.render_inventory(fixture_accounts)
 
-    @patch("handler.dynamodb_client")
-    def test_store_accounts_in_dynamodb_partial_failure(self, mock_dynamodb):
-        """Test partial failure when storing accounts in DynamoDB."""
-        # First call succeeds, second fails
-        mock_dynamodb.put_item.side_effect = [
-            {},  # Success
-            Exception("DynamoDB Error"),  # Failure
-        ]
+        assert "generated" not in body
+        assert "updated" not in body.lower()
 
-        accounts = [
-            handler.AccountInfo(
-                AccountId="123456789012",
-                AccountName="Production",
-                OUPath="root/prod",
-                Status="ACTIVE",
-            ),
-            handler.AccountInfo(
-                AccountId="210987654321",
-                AccountName="Development",
-                OUPath="root/dev",
-                Status="ACTIVE",
-            ),
-        ]
+    def test_render_inventory_matches_shared_fixture(self, fixture_accounts):
+        """The output is equivalent to the fixture parsed by the validation lambda."""
+        fixture = SHARED_FIXTURE.read_text()
 
-        stored_count = handler.store_accounts_in_dynamodb(accounts, "test-table")
-
-        # Should have stored one account before the error
-        assert stored_count == 1
-        assert mock_dynamodb.put_item.call_count == 2
-
-    @patch("handler.dynamodb_client")
-    def test_store_accounts_in_dynamodb_empty_list(self, mock_dynamodb):
-        """Test storing empty account list."""
-        stored_count = handler.store_accounts_in_dynamodb([], "test-table")
-
-        assert stored_count == 0
-        mock_dynamodb.put_item.assert_not_called()
+        assert yaml.safe_load(
+            handler.render_inventory(fixture_accounts)
+        ) == yaml.safe_load(fixture)
 
 
 # ============================================================================
-# Tests for environment variable validation in lambda_handler
+# Tests for store_inventory function
 # ============================================================================
 
 
-class TestEnvironmentValidation:
-    """Tests for environment variable validation."""
+class TestStoreInventory:
+    """Tests for store_inventory function."""
 
-    @patch.dict(
-        os.environ,
-        {
-            "DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/test-table"
-        },
-    )
-    @patch("handler.store_accounts_in_dynamodb")
-    @patch("handler.list_accounts_with_details")
-    @patch("handler.build_ou_map")
-    def test_environment_validation_success(
-        self, mock_build_ou_map, mock_list_accounts, mock_store_accounts, mock_context
-    ):
-        """Test environment validation succeeds with DYNAMODB_TABLE_ARN set."""
-        mock_build_ou_map.return_value = {}
-        mock_list_accounts.return_value = []
-        mock_store_accounts.return_value = 0
+    BODY = "version: 1\naccounts: {}\n"
 
-        result = handler.lambda_handler({}, mock_context)
-        assert result["statusCode"] == 200
+    @patch("handler.s3_client")
+    def test_store_inventory_skips_unchanged(self, mock_s3):
+        digest = hashlib.sha256(self.BODY.encode("utf-8")).hexdigest()
+        mock_s3.head_object.return_value = {"Metadata": {"content-sha256": digest}}
+
+        assert handler.store_inventory("bucket", "accounts.yaml", self.BODY) is False
+        mock_s3.head_object.assert_called_once_with(
+            Bucket="bucket", Key="accounts.yaml"
+        )
+        mock_s3.put_object.assert_not_called()
+
+    @patch("handler.s3_client")
+    def test_store_inventory_writes_on_change(self, mock_s3):
+        mock_s3.head_object.return_value = {"Metadata": {"content-sha256": "stale"}}
+
+        assert handler.store_inventory("bucket", "accounts.yaml", self.BODY) is True
+
+        mock_s3.put_object.assert_called_once()
+        kwargs = mock_s3.put_object.call_args.kwargs
+        assert kwargs["Bucket"] == "bucket"
+        assert kwargs["Key"] == "accounts.yaml"
+        assert kwargs["Body"] == self.BODY.encode("utf-8")
+        assert kwargs["ContentType"] == "application/x-yaml"
         assert (
-            result["body"]["message"]
-            == "Successfully synced AWS Organizations accounts"
+            kwargs["Metadata"]["content-sha256"]
+            == hashlib.sha256(self.BODY.encode("utf-8")).hexdigest()
+        )
+        assert kwargs["Metadata"]["generated-at"]
+
+    @patch("handler.s3_client")
+    def test_store_inventory_first_write(self, mock_s3):
+        mock_s3.head_object.side_effect = _client_error("404")
+
+        assert handler.store_inventory("bucket", "accounts.yaml", self.BODY) is True
+        mock_s3.put_object.assert_called_once()
+
+    @patch("handler.s3_client")
+    def test_store_inventory_head_error_raises(self, mock_s3):
+        """Errors other than not-found (e.g. access denied) are not treated as a first write."""
+        mock_s3.head_object.side_effect = _client_error("403")
+
+        with pytest.raises(ClientError):
+            handler.store_inventory("bucket", "accounts.yaml", self.BODY)
+        mock_s3.put_object.assert_not_called()
+
+
+# ============================================================================
+# Tests for bump_conformance_pack function
+# ============================================================================
+
+
+class TestBumpConformancePack:
+    """Tests for bump_conformance_pack function."""
+
+    @patch("handler.config_client")
+    def test_bump_pack_preserves_parameters(self, mock_config):
+        mock_config.describe_organization_conformance_packs.return_value = {
+            "OrganizationConformancePacks": [
+                {
+                    "OrganizationConformancePackName": "tagging-compliance",
+                    "DeliveryS3Bucket": "awsconfigconforms-delivery",
+                    "DeliveryS3KeyPrefix": "tagging",
+                    "ExcludedAccounts": ["111111111111"],
+                    "ConformancePackInputParameters": [
+                        {"ParameterName": "PolicyVersion", "ParameterValue": "p1"},
+                        {"ParameterName": "MappingsVersion", "ParameterValue": "m1"},
+                        {"ParameterName": "InventoryVersion", "ParameterValue": "old"},
+                    ],
+                }
+            ]
+        }
+
+        handler.bump_conformance_pack("tagging-compliance", "new", TEMPLATE_URI)
+
+        mock_config.describe_organization_conformance_packs.assert_called_once_with(
+            OrganizationConformancePackNames=["tagging-compliance"]
+        )
+        mock_config.put_organization_conformance_pack.assert_called_once()
+        kwargs = mock_config.put_organization_conformance_pack.call_args.kwargs
+        assert kwargs["OrganizationConformancePackName"] == "tagging-compliance"
+        assert kwargs["TemplateS3Uri"] == TEMPLATE_URI
+        assert kwargs["DeliveryS3Bucket"] == "awsconfigconforms-delivery"
+        assert kwargs["DeliveryS3KeyPrefix"] == "tagging"
+        assert kwargs["ExcludedAccounts"] == ["111111111111"]
+        params = {
+            p["ParameterName"]: p["ParameterValue"]
+            for p in kwargs["ConformancePackInputParameters"]
+        }
+        assert params == {
+            "PolicyVersion": "p1",
+            "MappingsVersion": "m1",
+            "InventoryVersion": "new",
+        }
+
+    @patch("handler.config_client")
+    def test_bump_pack_adds_missing_inventory_version(self, mock_config):
+        mock_config.describe_organization_conformance_packs.return_value = {
+            "OrganizationConformancePacks": [
+                {
+                    "OrganizationConformancePackName": "tagging-compliance",
+                    "ConformancePackInputParameters": [
+                        {"ParameterName": "PolicyVersion", "ParameterValue": "p1"},
+                    ],
+                }
+            ]
+        }
+
+        handler.bump_conformance_pack("tagging-compliance", "new", TEMPLATE_URI)
+
+        kwargs = mock_config.put_organization_conformance_pack.call_args.kwargs
+        assert "DeliveryS3Bucket" not in kwargs
+        assert "DeliveryS3KeyPrefix" not in kwargs
+        assert kwargs["ExcludedAccounts"] == []
+        assert {
+            p["ParameterName"]: p["ParameterValue"]
+            for p in kwargs["ConformancePackInputParameters"]
+        } == {"PolicyVersion": "p1", "InventoryVersion": "new"}
+
+    @patch("handler.config_client")
+    def test_bump_pack_missing_pack_warns(self, mock_config):
+        mock_config.describe_organization_conformance_packs.side_effect = _client_error(
+            "NoSuchOrganizationConformancePackException",
+            "DescribeOrganizationConformancePacks",
         )
 
-    @patch.dict(os.environ, {}, clear=True)
-    def test_environment_validation_missing_table_name(self, mock_context):
-        """Test environment validation fails when DYNAMODB_TABLE_ARN is missing."""
-        result = handler.lambda_handler({}, mock_context)
-        assert result["statusCode"] == 500
-        assert "DYNAMODB_TABLE_ARN" in result["body"]["error"]
+        handler.bump_conformance_pack("tagging-compliance", "new", TEMPLATE_URI)
+
+        mock_config.put_organization_conformance_pack.assert_not_called()
+
+    @patch("handler.config_client")
+    def test_bump_pack_other_errors_raise(self, mock_config):
+        mock_config.describe_organization_conformance_packs.side_effect = _client_error(
+            "OrganizationAccessDeniedException",
+            "DescribeOrganizationConformancePacks",
+        )
+
+        with pytest.raises(ClientError):
+            handler.bump_conformance_pack("tagging-compliance", "new", TEMPLATE_URI)
 
 
 # ============================================================================
-# Tests for lambda_handler integration
+# Tests for lambda_handler
 # ============================================================================
+
+
+ENV = {
+    "BUCKET_NAME": "tagging-compliance",
+    "ACCOUNTS_KEY": "accounts.yaml",
+}
+PACK_ENV = dict(
+    ENV,
+    CONFORMANCE_PACK_NAME="tagging-compliance",
+    CONFORMANCE_PACK_TEMPLATE_URI=TEMPLATE_URI,
+)
 
 
 class TestLambdaHandler:
     """Tests for the main lambda_handler function."""
 
-    @patch.dict(
-        os.environ,
-        {
-            "DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/test-table"
-        },
-    )
-    @patch("handler.store_accounts_in_dynamodb")
+    @patch.dict(os.environ, PACK_ENV, clear=True)
+    @patch("handler.bump_conformance_pack")
+    @patch("handler.store_inventory", return_value=True)
     @patch("handler.list_accounts_with_details")
-    @patch("handler.build_ou_map")
-    def test_lambda_handler_success(
-        self,
-        mock_build_ou_map,
-        mock_list_accounts,
-        mock_store_accounts,
-        mock_context,
+    @patch("handler.build_ou_map", return_value={})
+    def test_handler_bumps_pack_on_change(
+        self, _ou, mock_list, mock_store, mock_bump, mock_context, fixture_accounts
     ):
-        """Test lambda handler successfully syncs accounts."""
-        sample_ou_map = {"r-1234": {"name": "root", "parent_id": None}}
-        mock_build_ou_map.return_value = sample_ou_map
-
-        sample_accounts = [
-            handler.AccountInfo(
-                AccountId="123456789012",
-                AccountName="Production",
-                OUPath="root",
-                Status="ACTIVE",
-            ),
-        ]
-        mock_list_accounts.return_value = sample_accounts
-        mock_store_accounts.return_value = 1
+        mock_list.return_value = fixture_accounts
 
         result = handler.lambda_handler({}, mock_context)
 
-        assert result["statusCode"] == 200
-        assert result["body"]["stored_count"] == 1
-        assert result["body"]["total_count"] == 1
-        assert "Successfully synced" in result["body"]["message"]
-
-        mock_build_ou_map.assert_called_once()
-        mock_list_accounts.assert_called_once_with(sample_ou_map)
-        mock_store_accounts.assert_called_once_with(
-            accounts=sample_accounts,
-            table_arn="arn:aws:dynamodb:us-east-1:123456789012:table/test-table",
+        body = handler.render_inventory(fixture_accounts)
+        assert result == {"status": "ok", "account_count": 2, "changed": True}
+        mock_store.assert_called_once_with("tagging-compliance", "accounts.yaml", body)
+        mock_bump.assert_called_once_with(
+            "tagging-compliance",
+            hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            TEMPLATE_URI,
         )
 
-    @patch.dict(
-        os.environ,
-        {
-            "DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/test-table"
-        },
-    )
-    @patch("handler.build_ou_map")
-    def test_lambda_handler_missing_environment(self, mock_build_ou_map, mock_context):
-        """Test lambda handler with missing environment variable."""
-        # This test needs to clear the environment after patching
-        with patch.dict(os.environ, {}, clear=True):
-            result = handler.lambda_handler({}, mock_context)
-            assert result["statusCode"] == 500
-            assert "error" in result["body"]
-
-    @patch.dict(os.environ, {"DYNAMODB_TABLE_NAME": "test-table"})
-    @patch("handler.build_ou_map")
-    def test_lambda_handler_build_ou_map_error(self, mock_build_ou_map, mock_context):
-        """Test lambda handler handles build_ou_map errors."""
-        mock_build_ou_map.side_effect = Exception("Organizations API Error")
-
-        result = handler.lambda_handler({}, mock_context)
-
-        assert result["statusCode"] == 500
-        assert "Failed to sync" in result["body"]["message"]
-        assert "error" in result["body"]
-
-    @patch.dict(
-        os.environ,
-        {
-            "DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/test-table"
-        },
-    )
-    @patch("handler.store_accounts_in_dynamodb")
-    @patch("handler.list_accounts_with_details")
-    @patch("handler.build_ou_map")
-    def test_lambda_handler_multiple_accounts(
-        self,
-        mock_build_ou_map,
-        mock_list_accounts,
-        mock_store_accounts,
-        mock_context,
+    @patch.dict(os.environ, PACK_ENV, clear=True)
+    @patch("handler.bump_conformance_pack")
+    @patch("handler.store_inventory", return_value=False)
+    @patch("handler.list_accounts_with_details", return_value=[])
+    @patch("handler.build_ou_map", return_value={})
+    def test_handler_no_bump_when_unchanged(
+        self, _ou, _list, _store, mock_bump, mock_context
     ):
-        """Test lambda handler with multiple accounts."""
-        sample_ou_map = {"r-1234": {"name": "root", "parent_id": None}}
-        mock_build_ou_map.return_value = sample_ou_map
-
-        sample_accounts = [
-            handler.AccountInfo(
-                AccountId="123456789012",
-                AccountName="Production",
-                OUPath="root/prod",
-                Status="ACTIVE",
-            ),
-            handler.AccountInfo(
-                AccountId="210987654321",
-                AccountName="Development",
-                OUPath="root/dev",
-                Status="ACTIVE",
-            ),
-            handler.AccountInfo(
-                AccountId="111222333444",
-                AccountName="Staging",
-                OUPath="root/staging",
-                Status="ACTIVE",
-            ),
-        ]
-        mock_list_accounts.return_value = sample_accounts
-        mock_store_accounts.return_value = 3
-
         result = handler.lambda_handler({}, mock_context)
 
-        assert result["statusCode"] == 200
-        assert result["body"]["stored_count"] == 3
-        assert result["body"]["total_count"] == 3
+        assert result == {"status": "ok", "account_count": 0, "changed": False}
+        mock_bump.assert_not_called()
+
+    @patch.dict(os.environ, ENV, clear=True)
+    @patch("handler.bump_conformance_pack")
+    @patch("handler.store_inventory", return_value=True)
+    @patch("handler.list_accounts_with_details", return_value=[])
+    @patch("handler.build_ou_map", return_value={})
+    def test_handler_no_bump_without_pack_name(
+        self, _ou, _list, _store, mock_bump, mock_context
+    ):
+        result = handler.lambda_handler({}, mock_context)
+
+        assert result["changed"] is True
+        mock_bump.assert_not_called()
 
     @patch.dict(
-        os.environ,
-        {
-            "DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/test-table"
-        },
+        os.environ, dict(ENV, CONFORMANCE_PACK_NAME="tagging-compliance"), clear=True
     )
-    @patch("handler.store_accounts_in_dynamodb")
-    @patch("handler.list_accounts_with_details")
-    @patch("handler.build_ou_map")
-    def test_lambda_handler_no_accounts(
-        self,
-        mock_build_ou_map,
-        mock_list_accounts,
-        mock_store_accounts,
-        mock_context,
+    @patch("handler.bump_conformance_pack")
+    @patch("handler.store_inventory", return_value=True)
+    @patch("handler.list_accounts_with_details", return_value=[])
+    @patch("handler.build_ou_map", return_value={})
+    def test_handler_no_bump_without_template_uri(
+        self, _ou, _list, _store, mock_bump, mock_context
     ):
-        """Test lambda handler with no accounts in organization."""
-        sample_ou_map = {"r-1234": {"name": "root", "parent_id": None}}
-        mock_build_ou_map.return_value = sample_ou_map
-
-        mock_list_accounts.return_value = []
-        mock_store_accounts.return_value = 0
-
         result = handler.lambda_handler({}, mock_context)
 
-        assert result["statusCode"] == 200
-        assert result["body"]["stored_count"] == 0
-        assert result["body"]["total_count"] == 0
+        assert result["changed"] is True
+        mock_bump.assert_not_called()
 
-    @patch.dict(
-        os.environ,
-        {
-            "DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:123456789012:table/test-table"
-        },
-    )
-    @patch("handler.store_accounts_in_dynamodb")
-    @patch("handler.list_accounts_with_details")
-    @patch("handler.build_ou_map")
-    def test_lambda_handler_partial_store_failure(
-        self,
-        mock_build_ou_map,
-        mock_list_accounts,
-        mock_store_accounts,
-        mock_context,
-    ):
-        """Test lambda handler when some accounts fail to store."""
-        sample_ou_map = {"r-1234": {"name": "root", "parent_id": None}}
-        mock_build_ou_map.return_value = sample_ou_map
+    @patch.dict(os.environ, {"ACCOUNTS_KEY": "accounts.yaml"}, clear=True)
+    def test_handler_missing_bucket_raises(self, mock_context):
+        with pytest.raises(ValueError, match="BUCKET_NAME"):
+            handler.lambda_handler({}, mock_context)
 
-        sample_accounts = [
-            handler.AccountInfo(
-                AccountId="123456789012",
-                AccountName="Production",
-                OUPath="root",
-                Status="ACTIVE",
-            ),
-            handler.AccountInfo(
-                AccountId="210987654321",
-                AccountName="Development",
-                OUPath="root",
-                Status="ACTIVE",
-            ),
-        ]
-        mock_list_accounts.return_value = sample_accounts
-        # Only 1 account stored successfully out of 2
-        mock_store_accounts.return_value = 1
-
-        result = handler.lambda_handler({}, mock_context)
-
-        assert result["statusCode"] == 200
-        assert result["body"]["stored_count"] == 1
-        assert result["body"]["total_count"] == 2
-
-
-# ============================================================================
-# Tests for DynamoDB item format
-# ============================================================================
-
-
-class TestDynamoDBItemFormat:
-    """Tests for validating DynamoDB item format."""
-
-    @patch("handler.dynamodb_client")
-    def test_dynamodb_item_format_correctness(self, mock_dynamodb):
-        """Test that account info is stored in correct DynamoDB format."""
-        mock_dynamodb.put_item.return_value = {}
-
-        account = handler.AccountInfo(
-            AccountId="123456789012",
-            AccountName="Test Account",
-            OUPath="root/test",
-            Status="ACTIVE",
-        )
-
-        handler.store_accounts_in_dynamodb([account], "test-table")
-
-        # Verify the item format
-        call_args = mock_dynamodb.put_item.call_args[1]
-        item = call_args["Item"]
-
-        # All fields should be in DynamoDB format with type descriptors
-        assert isinstance(item["AccountId"], dict)
-        assert "S" in item["AccountId"]
-        assert item["AccountId"]["S"] == "123456789012"
-
-        assert isinstance(item["AccountName"], dict)
-        assert "S" in item["AccountName"]
-
-        assert isinstance(item["OUPath"], dict)
-        assert "S" in item["OUPath"]
-
-        assert isinstance(item["Status"], dict)
-        assert "S" in item["Status"]
-
-        assert isinstance(item["LastUpdated"], dict)
-        assert "S" in item["LastUpdated"]
+    @patch.dict(os.environ, ENV, clear=True)
+    @patch("handler.store_inventory")
+    @patch("handler.build_ou_map", side_effect=Exception("Organizations API Error"))
+    def test_handler_build_ou_map_error_raises(self, _ou, mock_store, mock_context):
+        with pytest.raises(Exception, match="Organizations API Error"):
+            handler.lambda_handler({}, mock_context)
+        mock_store.assert_not_called()

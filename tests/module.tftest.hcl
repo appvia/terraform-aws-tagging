@@ -256,3 +256,124 @@ run "organizations_id_discovered" {
     error_message = "The organization id must be discovered when not provided"
   }
 }
+
+run "organizations_with_conformance_pack" {
+  command = plan
+
+  variables {
+    organizations = {
+      conformance_pack_name         = "tagging-compliance"
+      conformance_pack_template_uri = "s3://tagging-conformance-pack/conformance-packs/tagging-compliance.yaml"
+    }
+  }
+
+  assert {
+    condition     = output.accounts_key == "accounts.yaml"
+    error_message = "accounts_key must be accounts.yaml when organizations is enabled"
+  }
+}
+
+run "organizations_module_events_and_permissions" {
+  command = plan
+
+  module {
+    source = "./modules/organizations"
+  }
+
+  variables {
+    bucket_arn                    = "arn:aws:s3:::tagging-compliance"
+    bucket_name                   = "tagging-compliance"
+    conformance_pack_name         = "tagging-compliance"
+    conformance_pack_template_uri = "s3://tagging-conformance-pack/conformance-packs/tagging-compliance.yaml"
+    enable_account_event_sync     = true
+  }
+
+  assert {
+    condition = jsondecode(aws_cloudwatch_event_rule.account_events[0].event_pattern).detail.eventName == [
+      "CreateAccount", "CloseAccount", "MoveAccount", "TagResource", "UntagResource",
+    ]
+    error_message = "The account event rule must match create, close, move, tag and untag events"
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_event_rule.scheduled_sync) == 1
+    error_message = "The scheduled sync must be enabled by default"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.permissions.statement : s.effect == "Allow" && contains(s.actions, "s3:PutObject") && contains(s.actions, "s3:GetObject") && toset(s.resources) == toset(["arn:aws:s3:::tagging-compliance/accounts.yaml"])
+    ])
+    error_message = "The lambda must be able to read and write the accounts object only"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.permissions.statement : contains(s.actions, "organizations:ListTagsForResource")
+    ])
+    error_message = "The lambda must be granted organizations:ListTagsForResource explicitly"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.permissions.statement : !anytrue([for a in s.actions : startswith(a, "dynamodb:")])
+    ])
+    error_message = "The lambda must not be granted any DynamoDB permissions"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.permissions.statement : toset(s.actions) == toset([
+        "config:DescribeOrganizationConformancePacks",
+        "config:PutOrganizationConformancePack",
+        "organizations:DescribeOrganization",
+        "organizations:EnableAWSServiceAccess",
+        "organizations:ListAccounts",
+        "organizations:ListDelegatedAdministrators",
+        "organizations:RegisterDelegatedAdministrator",
+      ])
+    ])
+    error_message = "The lambda must be granted the PutOrganizationConformancePack permissions"
+  }
+
+  assert {
+    condition = anytrue(flatten([
+      for s in data.aws_iam_policy_document.permissions.statement : [
+        for c in coalesce(s.condition, []) : contains(s.actions, "iam:CreateServiceLinkedRole") && c.variable == "iam:AWSServiceName" && contains(c.values, "config-multiaccountsetup.amazonaws.com")
+      ]
+    ]))
+    error_message = "iam:CreateServiceLinkedRole must be scoped to config-multiaccountsetup.amazonaws.com"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.permissions.statement : toset(s.actions) == toset(["s3:GetObject"]) && toset(s.resources) == toset(["arn:aws:s3:::tagging-conformance-pack/conformance-packs/tagging-compliance.yaml"])
+    ])
+    error_message = "The lambda must be able to read the conformance pack template object"
+  }
+}
+
+run "organizations_module_without_conformance_pack" {
+  command = plan
+
+  module {
+    source = "./modules/organizations"
+  }
+
+  variables {
+    bucket_arn  = "arn:aws:s3:::tagging-compliance"
+    bucket_name = "tagging-compliance"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.permissions.statement : !anytrue([for a in s.actions : startswith(a, "config:") || startswith(a, "iam:")])
+    ])
+    error_message = "No conformance pack permissions must be granted without a conformance pack name"
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_event_rule.account_events) == 0
+    error_message = "The account event rule must be disabled by default"
+  }
+}
