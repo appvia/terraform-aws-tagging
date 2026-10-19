@@ -2,35 +2,34 @@
 
 ## Introduction
 
-This Terraform module provisions an AWS Config custom rule that evaluates tagging compliance across your AWS resources. It integrates with a separate validation Lambda module that retrieves tagging rules from a DynamoDB table and automatically evaluates resources against those rules, marking them as compliant or non-compliant based on required tags and their values.
+This Terraform module provisions an AWS Config custom rule that evaluates tagging compliance across your AWS resources. It integrates with a separate validation Lambda module that reads a YAML tagging policy from S3 and automatically evaluates resources against the policy, marking them as compliant or non-compliant.
 
 ### Key Features
 
 - **Modular Architecture**: Separates AWS Config rules from Lambda function management
 - **Custom AWS Config Rules**: Automatically evaluate resources for tagging compliance
-- **Flexible Rule Configuration**: Define rules via DynamoDB with support for:
-  - Required vs. optional tags
-  - Specific permitted tag values
-  - Regex pattern matching for tag values
-  - Account-specific or global rules
-  - Enabled/disabled rule toggles
-- **High Performance Rules Caching**: Optional in-memory caching reduces DynamoDB reads by 80-90% and improves response times
+- **YAML Policy Engine**: Define rules in a declarative YAML policy stored in S3 with support for:
+  - Required tag assertions
+  - Permitted values and regex pattern matching
+  - Account ID, organizational path, and account tag filtering
+  - Multi-step rule chains with filters and assertions
+- **High Performance Caching**: Optional in-memory caching with ETag revalidation reduces S3 reads by 80-90% and improves response times
 - **Cross-Account Lambda Support**: Allow any account in your organization to invoke the Lambda
 - **Structured Logging**: JSON-formatted logs for easy integration with CloudWatch Logs Insights
 - **IAM Best Practices**: Minimal permissions with least-privilege access
-- **Encryption Support**: Optional KMS encryption for CloudWatch Logs
-- **Configurable Evaluation Frequency**: Control how often resources are evaluated
+- **Encryption Support**: Optional KMS encryption for CloudWatch Logs and S3 bucket
+- **Automatic Re-evaluation**: Policy and mappings version hashes trigger Config to re-evaluate all resources
 
 ### Module Components
 
-- **AWS Lambda Function**: Python-based handler deployed via `../validation` module that evaluates resource tags against rules stored in DynamoDB
+- **AWS Lambda Function**: Python-based handler deployed via `../validation` module that evaluates resource tags against a YAML policy loaded from S3
 - **AWS Config Custom Rule**: Invokes the Lambda function to assess resource compliance
 - **Lambda Permissions**: Grants cross-account and organization-wide invocation rights
 - **CloudWatch Logs**: Structured JSON logging with optional encryption and retention policies
 
 ## Architecture
 
-The config module now uses a separated validation module:
+The config module integrates with the validation module to load policy from S3:
 
 ```
 ┌──────────────────────────────┐
@@ -49,7 +48,17 @@ The config module now uses a separated validation module:
 │  • Lambda function            │
 │  • IAM role & policy          │
 │  • CloudWatch logs            │
-│  • DynamoDB integration       │
+│  • S3 policy loader           │
+└────────────┬──────────────────┘
+             │
+             │ Reads (cross-account)
+             ▼
+┌──────────────────────────────┐
+│  S3 Bucket (Management Acct)  │
+│                               │
+│  • policy.yaml                │
+│  • mappings.yaml              │
+│  • accounts.yaml (optional)   │
 └──────────────────────────────┘
 ```
 
@@ -61,25 +70,32 @@ The config module now uses a separated validation module:
 module "config_tagging_compliance" {
   source = "./modules/config"
 
-  # DynamoDB table containing tagging rules
-  dynamodb_table_arn = aws_dynamodb_table.tagging_rules.arn
+  # S3 bucket containing tagging policy and mappings
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."  # From root module output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."  # From root module output
+  accounts_key       = "accounts.yaml"
 
   # Lambda configuration (passed to validation module)
   lambda_name        = "tagging-compliance-handler"
   lambda_description = "Evaluates tagging compliance for AWS resources"
-  lambda_runtime     = "python3.12"
+  lambda_runtime     = "python3.14"
   lambda_timeout     = 30
   lambda_log_level   = "INFO"
   lambda_role_name   = "tagging-compliance-lambda-role"
 
-  # Rules caching configuration (optional, improves performance)
-  rules_cache_enabled     = true   # Enable in-memory caching of rules
-  rules_cache_ttl_seconds = 300    # Cache rules for 5 minutes
+  # Policy caching configuration (optional, improves performance)
+  rules_cache_enabled     = true   # Enable in-memory caching of policy/mappings/inventory
+  rules_cache_ttl_seconds = 300    # Cache objects for 5 minutes
 
   # AWS Config rule configuration
-  config_name                    = "tagging-compliance"
-  config_max_execution_frequency = "TwentyFour_Hours"
-  config_resource_types          = ["AWS::EC2::Instance", "AWS::S3::Bucket", "AWS::RDS::DBInstance"]
+  config_name                  = "tagging-compliance"
+  maximum_execution_frequency  = "TwentyFour_Hours"
+  periodic_evaluation_enabled  = true
+  config_resource_types        = ["AWS::EC2::Instance", "AWS::S3::Bucket", "AWS::RDS::DBInstance"]
 
   # CloudWatch Logs configuration
   cloudwatch_logs_retention_in_days = 7
@@ -95,10 +111,10 @@ module "config_tagging_compliance" {
 
 ### Lambda and Config Separation
 
-The `config` module now delegates Lambda function management to the `validation` module for better separation of concerns:
+The `config` module delegates Lambda function management to the `validation` module for better separation of concerns:
 
 - **config module**: Manages AWS Config rules and Lambda permissions
-- **validation module**: Manages Lambda function, IAM roles, and logging
+- **validation module**: Manages Lambda function, IAM roles, logging, and S3 policy loading
 
 This allows you to:
 - Share a single Lambda across multiple Config rules
@@ -107,135 +123,113 @@ This allows you to:
 
 If you need to customize the Lambda function beyond what this module provides, you can directly use the validation module.
 
-### Rule Configuration in DynamoDB
+### Policy Configuration in S3
 
-The compliance rules are stored in a DynamoDB table with the following structure:
+Compliance rules are defined in a YAML policy file stored in S3. The policy uses a declarative syntax with filter and assert steps.
 
-```hcl
-# Example: Require an Environment tag with specific values
-{
-  AccountIds  = ["*"]                    # Apply to all accounts
-  Enabled     = true                     # Rule is active
-  Required    = true                     # Tag must be present
-  ResourceType = "AWS::EC2::*"           # Applies to all EC2 resources
-  Tag         = "Environment"            # Tag key to check
-  ValuePattern = ""                      # No regex pattern
-  Values      = ["Production", "Staging", "Development"]  # Permitted values
-}
+#### Example Policy
 
-# Example: Optional tag with email pattern matching
-{
-  AccountIds   = ["123456789012"]        # Specific account only
-  Enabled      = true
-  Required     = false                   # Tag is optional
-  ResourceType = "AWS::EC2::Instance"    # Specific resource type
-  Tag          = "Owner"
-  ValuePattern = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"  # Email regex
-  Values       = []                      # No specific values
-}
+```yaml
+version: 1
+rules:
+  - name: require-environment-tag
+    description: All resources must have valid Environment tag
+    steps:
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [production, staging, development]}
+
+  - name: require-owner-email
+    description: All resources must have Owner email
+    steps:
+      - assert: {tag: Owner, present: true}
+      - assert: {tag: Owner, matches: "^[a-zA-Z0-9._%+-]+@company\\.com$"}
+
+  - name: prod-cost-center
+    description: Production accounts require CostCenter
+    steps:
+      - filter: {account_id: ["111222333444"]}
+      - assert: {tag: CostCenter, present: true}
 ```
 
-## Rule Definition Reference
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `AccountIds` | list(string) | No | `["*"]` | AWS account IDs to apply rule to. Use `"*"` for all accounts. |
-| `Enabled` | bool | No | `true` | Whether the rule is active. Set to `false` to disable without deleting. |
-| `Required` | bool | No | `true` | Whether the tag must be present. Set to `false` to only validate if present. |
-| `ResourceType` | string | Yes | — | AWS resource type pattern (e.g., `"AWS::EC2::*"`, `"AWS::S3::Bucket"`). Use `"*"` for all types. |
-| `Tag` | string | Yes | — | Tag key to evaluate (e.g., `"Environment"`, `"Owner"`). |
-| `ValuePattern` | string | No | `""` | Optional regex pattern for validating tag values. |
-| `Values` | list(string) | No | `[]` | List of permitted tag values (ignored if `ValuePattern` is set). |
+For complete policy syntax and examples, see the [root module README](../../README.md#policy) and [validation module documentation](../validation/README.md).
 
 ## Examples
 
 ### Example 1: Enforce Environment Tags
 
-```hcl
-# Store rule in DynamoDB
-resource "aws_dynamodb_table_item" "environment_tag_rule" {
-  table_name = aws_dynamodb_table.tagging_rules.name
-  item = jsonencode({
-    ResourceType = { S = "AWS::EC2::*" }
-    Tag          = { S = "Environment" }
-    Enabled      = { BOOL = true }
-    Required     = { BOOL = true }
-    Values       = { SS = ["production", "staging", "development", "sandbox"] }
-    AccountIds   = { SS = ["*"] }
-  })
-}
+Add this rule to your `policy.yaml`:
+
+```yaml
+- name: require-environment-tag
+  description: All EC2 resources must have valid Environment tag
+  steps:
+    - filter: {type: [aws_ec2_instance, aws_ec2_volume]}
+    - assert: {tag: Environment, present: true}
+    - assert: {tag: Environment, in: [production, staging, development, sandbox]}
 ```
 
 ### Example 2: Enforce Owner Email Tag (Pattern-based)
 
-```hcl
-# Store rule in DynamoDB
-resource "aws_dynamodb_table_item" "owner_email_rule" {
-  table_name = aws_dynamodb_table.tagging_rules.name
-  item = jsonencode({
-    ResourceType  = { S = "AWS::*" }
-    Tag           = { S = "Owner" }
-    Enabled       = { BOOL = true }
-    Required      = { BOOL = true }
-    ValuePattern  = { S = "^[a-zA-Z0-9._%+-]+@company\\.com$" }
-    AccountIds    = { SS = ["*"] }
-  })
-}
+Add this rule to your `policy.yaml`:
+
+```yaml
+- name: require-owner-email
+  description: All resources must have Owner email from company domain
+  steps:
+    - assert: {tag: Owner, present: true}
+    - assert: {tag: Owner, matches: "^[a-zA-Z0-9._%+-]+@company\\.com$"}
 ```
 
-### Example 3: Optional Cost Center Tag (Account-specific)
+### Example 3: Account-Specific Cost Center Requirement
 
-```hcl
-# Store rule in DynamoDB
-resource "aws_dynamodb_table_item" "cost_center_rule" {
-  table_name = aws_dynamodb_table.tagging_rules.name
-  item = jsonencode({
-    ResourceType = { S = "AWS::RDS::DBInstance" }
-    Tag          = { S = "CostCenter" }
-    Enabled      = { BOOL = true }
-    Required     = { BOOL = false }  # Optional tag
-    Values       = { SS = ["CC-001", "CC-002", "CC-003"] }
-    AccountIds   = { SS = ["123456789012", "210987654321"] }  # Specific accounts
-  })
-}
+Add this rule to your `policy.yaml`:
+
+```yaml
+- name: prod-cost-center
+  description: Production accounts require CostCenter on databases
+  steps:
+    - filter: {type: [aws_db_instance, aws_rds_cluster]}
+    - filter: {account_id: ["123456789012", "210987654321"]}
+    - assert: {tag: CostCenter, present: true}
+    - assert: {tag: CostCenter, in: [CC-001, CC-002, CC-003]}
 ```
 
 ### Example 4: Full Module Configuration
 
 ```hcl
-# DynamoDB table for rules
-resource "aws_dynamodb_table" "tagging_rules" {
-  name           = "tagging-compliance-rules"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "ResourceType"
-  
-  attribute {
-    name = "ResourceType"
-    type = "S"
-  }
-
-  tags = {
-    Environment = "production"
-    ManagedBy   = "terraform"
-  }
+# Reference the S3 bucket with policy and mappings (created by root module)
+data "aws_s3_bucket" "policy_bucket" {
+  bucket = "org-tagging-compliance"
 }
 
 # Deploy the config module
 module "config_tagging_compliance" {
   source = "./modules/config"
 
-  dynamodb_table_arn = aws_dynamodb_table.tagging_rules.arn
+  policy_bucket_name = data.aws_s3_bucket.policy_bucket.id
+  policy_bucket_arn  = data.aws_s3_bucket.policy_bucket.arn
+  policy_key         = "policy.yaml"
+  policy_version     = var.policy_version  # Pass from root module output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = var.mappings_version  # Pass from root module output
+  accounts_key       = "accounts.yaml"
 
   lambda_name        = "tagging-compliance"
   lambda_description = "Evaluates resource tagging compliance via AWS Config"
   lambda_log_level   = "DEBUG"
+  lambda_runtime     = "python3.14"
+  lambda_timeout     = 60
 
-  config_name                    = "resource-tagging-compliance"
-  config_max_execution_frequency = "Six_Hours"
-  config_resource_types          = ["AWS::EC2::Instance", "AWS::S3::Bucket", "AWS::RDS::DBInstance", "AWS::Lambda::Function"]
+  config_name                  = "resource-tagging-compliance"
+  maximum_execution_frequency  = "Six_Hours"
+  periodic_evaluation_enabled  = true
+  config_resource_types        = ["AWS::EC2::Instance", "AWS::S3::Bucket", "AWS::RDS::DBInstance", "AWS::Lambda::Function"]
 
   cloudwatch_logs_retention_in_days = 14
   cloudwatch_logs_kms_key_id        = aws_kms_key.logs.id
+
+  # Optional: if policy bucket is encrypted with KMS
+  kms_key_arn = var.policy_bucket_kms_key_arn
 
   tags = {
     Environment = "production"
@@ -245,39 +239,44 @@ module "config_tagging_compliance" {
 
 # Output compliance status
 output "config_rule_arn" {
-  value = module.config_tagging_compliance.config_rule_arn
+  value = module.config_tagging_compliance.config_arn
 }
 
 output "lambda_function_arn" {
-  value = module.config_tagging_compliance.lambda_function_arn
+  value = module.config_tagging_compliance.lambda_arn
 }
 ```
 
 ## Compliance Evaluation Logic
 
-The Lambda function evaluates resources against rules using the following logic:
+The Lambda function evaluates resources against the YAML policy using the following logic:
 
-1. **Rule Matching**: Find all enabled rules matching the resource type and account
-2. **Tag Presence Check**: For required tags, verify the tag exists on the resource
-3. **Value Validation**: If values are specified, verify the tag value is in the permitted list
-4. **Pattern Matching**: If a regex pattern is specified, verify the tag value matches the pattern
-5. **Result**: Mark resource as:
-   - **COMPLIANT**: All required tags present with valid values
-   - **NON_COMPLIANT**: Missing required tags or invalid values
-   - **NOT_APPLICABLE**: No matching rules for the resource
+1. **Policy Loading**: Load policy.yaml, mappings.yaml, and accounts.yaml (if configured) from S3 with optional caching
+2. **Type Mapping**: Map AWS Config resource type to Terraform type using mappings.yaml
+3. **Rule Evaluation**: For each rule in the policy:
+   - Apply filter steps to determine if the rule applies to the resource
+   - Execute assert steps to check tag requirements
+   - Stop at the first assert that fails (error-severity violation)
+4. **Result Determination**: Mark resource as:
+   - **NON_COMPLIANT**: One or more error-severity violations found
+   - **COMPLIANT**: No error-severity violations (warnings are allowed)
+   - **NOT_APPLICABLE**: No rules reached an assert step, Config type not in mappings, or resource is deleted
+5. **Re-evaluation Triggers**: AWS Config re-evaluates all resources when `policy_version` or `mappings_version` input parameters change
 
-## Performance Optimization: Rules Caching
+**Note**: Per-account Config rules are NOT re-evaluated when the account inventory changes. The handler does not support ScheduledNotification events. For automatic re-evaluation on inventory changes, use the pack module with the organizations Lambda.
+
+## Performance Optimization: Policy Caching
 
 ### Overview
 
-The Lambda function supports optional in-memory caching of compliance rules to significantly reduce DynamoDB read costs and improve evaluation performance. When enabled, rules are cached in Lambda's execution environment and reused across invocations within the same container.
+The Lambda function supports optional in-memory caching of the policy, mappings, and inventory to significantly reduce S3 read costs and improve evaluation performance. When enabled, S3 objects are cached with ETag-based revalidation.
 
 ### Benefits
 
-- **Cost Reduction**: Reduces DynamoDB read capacity consumption by 80-90% in typical workloads
-- **Performance**: Faster evaluation times by eliminating DynamoDB API calls on cache hits
-- **Server-Side Filtering**: Only enabled rules are fetched from DynamoDB, reducing data transfer
-- **Automatic Expiration**: Configurable TTL ensures rules are periodically refreshed
+- **Cost Reduction**: Reduces S3 GET requests by 80-90% in typical workloads
+- **Performance**: Faster evaluation times by eliminating S3 API calls on cache hits
+- **ETag Revalidation**: After TTL expires, Lambda revalidates with the S3 ETag (304 response keeps cached copy)
+- **Automatic Failover**: If S3 errors and a cached copy exists, serves the stale copy and logs a warning
 
 ### Configuration
 
@@ -287,40 +286,42 @@ module "config_tagging_compliance" {
 
   # ... other configuration ...
 
-  # Enable rules caching (default: true)
+  # Enable policy caching (default: true)
   rules_cache_enabled = true
 
   # Cache TTL in seconds (default: 300)
-  # Rules are refreshed after this period
+  # Objects are revalidated with ETag after this period
   rules_cache_ttl_seconds = 300  # 5 minutes
 }
 ```
 
 ### How It Works
 
-1. **First Invocation (Cold Start)**: Lambda fetches rules from DynamoDB and stores them in memory
-2. **Subsequent Invocations (Warm Start)**: Lambda reuses cached rules if TTL hasn't expired
-3. **Cache Expiration**: After TTL expires, Lambda fetches fresh rules from DynamoDB
-4. **Container Recycling**: When AWS recycles the Lambda container, cache is reset
+1. **First Invocation (Cold Start)**: Lambda fetches policy, mappings, and inventory from S3 and caches them with their ETags
+2. **Subsequent Invocations (Warm Start)**: Lambda reuses cached objects if TTL hasn't expired
+3. **Cache Revalidation**: After TTL expires, Lambda sends conditional GET with ETag; S3 returns 304 if unchanged
+4. **S3 Failure Handling**: If S3 errors and a cached copy exists, Lambda serves the stale copy and logs a warning
+5. **Container Recycling**: When AWS recycles the Lambda container, cache is reset
 
 ### Trade-offs
 
 **Advantages:**
-- Significant cost savings on DynamoDB reads
+- Significant cost savings on S3 GET requests
 - Improved Lambda execution time
-- Reduced DynamoDB throttling risk
+- Graceful degradation when S3 is unavailable
+- ETag revalidation minimizes unnecessary data transfer
 
 **Considerations:**
-- Rule changes take up to TTL seconds to propagate to all Lambda instances
-- Multiple Lambda containers may have slightly stale rules during the TTL window
+- Policy changes take up to TTL seconds to propagate to all Lambda containers
+- Multiple Lambda containers may have slightly stale policies during the TTL window
 - For most use cases, a 5-minute delay is acceptable given the cost savings
 
 ### Recommendations
 
 - **Production workloads**: Enable caching with 300-600 second TTL
 - **Testing/development**: Disable caching or use shorter TTL (60 seconds) for faster iteration
-- **High-frequency changes**: Use shorter TTL (60-120 seconds) if rules change frequently
-- **Cost optimization**: Use longer TTL (600-3600 seconds) for stable rule sets
+- **High-frequency changes**: Use shorter TTL (60-120 seconds) if policy changes frequently
+- **Cost optimization**: Use longer TTL (600-3600 seconds) for stable policies
 
 ## Monitoring and Troubleshooting
 
@@ -337,13 +338,16 @@ fields @timestamp, @message, compliance_type, resource_id
 View compliance status directly in the AWS Config console:
 - Navigate to **Config Rules** → **tagging-compliance** rule
 - See non-compliant resources and compliance timeline
-- Remediate resources or update rules as needed
+- Remediate resources or update policy as needed
 
 ### Common Issues
 
-- **No matching rules found**: Verify the rule `ResourceType` pattern matches your resources
-- **Lambda timeout**: Increase `lambda_timeout` if evaluating many tags
-- **Permission errors**: Verify Lambda role has access to both DynamoDB and Config
+- **No matching rules found**: Verify the rule filters match your resource types and accounts
+- **Lambda timeout**: Increase `lambda_timeout` if evaluating complex policies
+- **Permission errors**: Verify Lambda role has S3 read access and kms:Decrypt if bucket is encrypted
+- **Invalid YAML**: Policy syntax errors cause immediate failure; validate with `policy.py` before deploying
+- **Stale policy served**: Check CloudWatch logs for warnings about S3 errors; cached copy is being used
+- **Resources not re-evaluated**: Verify `policy_version` and `mappings_version` are set correctly and change when policy updates
 
 <!-- BEGIN_TF_DOCS -->
 ## Providers

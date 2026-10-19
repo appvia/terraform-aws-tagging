@@ -2,14 +2,14 @@
 
 ## Description
 
-This example demonstrates how to deploy the AWS Config module to enforce tagging compliance in an AWS account. It creates an AWS Config custom rule that evaluates resources against tagging standards stored in a central DynamoDB table.
+This example demonstrates how to deploy the AWS Config module to enforce tagging compliance in an AWS account. It creates an AWS Config custom rule that evaluates resources against a YAML tagging policy stored in a central S3 bucket.
 
 The config module integrates with the validation module (Lambda function) to perform real-time compliance evaluation whenever resources are created or modified.
 
 ## What This Example Creates
 
 1. **AWS Config Custom Rule**: Named `tagging-compliance` that evaluates S3 buckets
-2. **Lambda Function**: Python-based evaluator (via validation module) that reads rules from DynamoDB
+2. **Lambda Function**: Python-based evaluator (via validation module) that reads YAML policy from S3
 3. **IAM Permissions**: Allows AWS Config to invoke the Lambda function
 4. **CloudWatch Logs**: Structured JSON logging for compliance evaluations
 
@@ -28,13 +28,13 @@ The config module integrates with the validation module (Lambda function) to per
 │                      ▼                                            │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Lambda Function                                          │  │
-│  │  • Reads rules from DynamoDB                             │  │
+│  │  • Loads YAML policy from S3                             │  │
 │  │  • Evaluates resource tags                               │  │
 │  │  • Returns compliance status                             │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
-│                      │ Cross-Account Read                        │
+│                      │ Cross-Account Read (HTTPS)                │
 │                      ▼                                            │
-│                [Central DynamoDB Table]                          │
+│                [S3 Bucket: policy.yaml, mappings.yaml]           │
 │                (Management Account)                              │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -77,18 +77,19 @@ terraform apply
 
 - Terraform >= 1.0
 - AWS CLI configured with appropriate credentials
-- **DynamoDB Table**: Central tagging rules table must exist (created via root module or compliance module)
+- **S3 Bucket with Policy**: Central S3 bucket with policy.yaml and mappings.yaml must exist (created via root module)
 - Permissions to:
   - Create Lambda functions and IAM roles
   - Create AWS Config rules
   - Create CloudWatch log groups
-  - Read from the DynamoDB table (cross-account if in different account)
+  - Read from the S3 bucket (cross-account if in different account)
+  - kms:Decrypt if the S3 bucket is encrypted with a customer-managed KMS key
 
 ## When to Use This Example
 
 Use this config module example when:
 - You want to enforce tagging compliance in a specific AWS account
-- You have a central DynamoDB table with tagging rules already created
+- You have a central S3 bucket with a YAML tagging policy already created
 - You need AWS Config to continuously evaluate resource compliance
 - You want real-time compliance reporting in the AWS Config console
 
@@ -100,8 +101,11 @@ Use this config module example when:
 module "config" {
   source = "../../modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/tagging-compliance"
-  config_name        = "tagging-compliance"
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_version     = "abc123..."
+  mappings_version   = "def456..."
+  config_resource_types = ["AWS::S3::Bucket"]
 }
 ```
 
@@ -111,20 +115,31 @@ module "config" {
 module "config" {
   source = "../../modules/config"
 
-  # DynamoDB table with tagging rules (typically in management account)
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/tagging-compliance"
+  # S3 bucket with tagging policy (typically in management account)
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."  # From root module output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."  # From root module output
+  accounts_key       = "accounts.yaml"
 
   # Lambda configuration (via validation module)
   lambda_name        = "tagging-compliance-evaluator"
   lambda_description = "Evaluates resource tagging compliance"
+  lambda_runtime     = "python3.14"
   lambda_timeout     = 60
   lambda_memory_size = 256
   lambda_log_level   = "INFO"
 
+  # Policy caching configuration
+  rules_cache_enabled     = true
+  rules_cache_ttl_seconds = 300
+
   # AWS Config rule settings
-  config_name                    = "tagging-compliance"
-  config_description             = "Evaluates tagging compliance for AWS resources"
-  config_max_execution_frequency = "Six_Hours"
+  config_name                  = "tagging-compliance"
+  maximum_execution_frequency  = "Six_Hours"
+  periodic_evaluation_enabled  = true
   config_resource_types = [
     "AWS::EC2::Instance",
     "AWS::EC2::Volume",
@@ -137,9 +152,8 @@ module "config" {
   cloudwatch_logs_retention_in_days = 14
   cloudwatch_logs_kms_key_id        = null  # Optional KMS encryption
 
-  # Cross-account support (for organization-wide Lambda)
-  organization_id          = "o-123456789"  # Allow all org accounts
-  allowed_source_accounts  = []             # Or specific accounts
+  # KMS key for encrypted S3 bucket (if applicable)
+  kms_key_arn = null
 
   tags = {
     Environment = "production"
@@ -227,9 +241,9 @@ Check CloudWatch Logs for execution errors:
 aws logs tail /aws/lambda/tagging-compliance-evaluator --follow
 ```
 
-### DynamoDB Access Denied
+### S3 Access Denied
 
-Ensure the Lambda IAM role has read permissions for the DynamoDB table and that the table's resource policy allows cross-account access (if applicable).
+Ensure the Lambda IAM role has S3 read permissions for the policy bucket and that the bucket policy allows cross-account access (if applicable). If the bucket is encrypted with KMS, verify the Lambda role has kms:Decrypt permission on the key.
 
 ## Cleanup
 
@@ -239,7 +253,7 @@ To destroy all resources:
 terraform destroy
 ```
 
-**Warning**: This will delete the DynamoDB table and all rules.
+**Warning**: This will delete the Lambda function and AWS Config rule. The S3 bucket with the tagging policy is not affected.
 
 <!-- BEGIN_TF_DOCS -->
 ## Providers
