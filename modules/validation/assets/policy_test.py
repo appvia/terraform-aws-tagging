@@ -103,8 +103,9 @@ class TestParsePolicy:
 
 class TestInvalidPolicy:
     def assertInvalid(self, data, fragment):
-        with pytest.raises(PolicyError, match=fragment):
+        with pytest.raises(PolicyError) as raised:
             parse_policy(data)
+        assert fragment in str(raised.value)
 
     def test_top_level(self):
         self.assertInvalid(None, "mapping")
@@ -189,12 +190,6 @@ class TestInvalidPolicy:
 
 
 class TestLoadPolicy:
-    def write(self, text):
-        handle = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8")
-        handle.write(text)
-        handle.close()
-        return handle.name
-
     def test_loads_yaml(self, tmp_path):
         path = tmp_path / "policy.yaml"
         path.write_text("version: 1\nrules:\n  - name: r\n    steps:\n      - assert: {tag: A, present: true}\n")

@@ -159,10 +159,6 @@ def _parse_condition(raw, where):
         if operator not in OPERATORS or operator == "present":
             allowed = ", ".join(op for op in OPERATORS if op != "present")
             raise PolicyError(f"{where}: {target} operator must be one of {allowed}")
-        # Reject "within" as a written operator
-        if operator == "within":
-            allowed = ", ".join(op for op in OPERATORS if op not in ("present", "within"))
-            raise PolicyError(f"{where}: {target} operator must be one of {allowed}")
         return Condition(target, (), operator, _operand(operator, operand, where), negate)
     # Plain form: use "within" operator for organizational_path, "equals" for others
     operator = "within" if target == "organizational_path" else "equals"
