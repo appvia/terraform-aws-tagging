@@ -1,0 +1,39 @@
+version: 1
+mappings:
+  # Compute
+  aws_instance: AWS::EC2::Instance
+  aws_ebs_volume: AWS::EC2::Volume
+  aws_lambda_function: AWS::Lambda::Function
+
+  # Networking
+  aws_vpc: AWS::EC2::VPC
+  aws_subnet: AWS::EC2::Subnet
+  aws_security_group: AWS::EC2::SecurityGroup
+  aws_lb: AWS::ElasticLoadBalancingV2::LoadBalancer
+  aws_alb: AWS::ElasticLoadBalancingV2::LoadBalancer
+  aws_nlb: AWS::ElasticLoadBalancingV2::LoadBalancer
+
+  # Storage
+  aws_s3_bucket: AWS::S3::Bucket
+
+  # Database
+  aws_db_instance: AWS::RDS::DBInstance
+  aws_rds_cluster: AWS::RDS::DBCluster
+  aws_dynamodb_table: AWS::DynamoDB::Table
+
+  # Containers
+  aws_ecs_cluster: AWS::ECS::Cluster
+  aws_ecs_service: AWS::ECS::Service
+  aws_eks_cluster: AWS::EKS::Cluster
+
+  # Messaging
+  aws_sqs_queue: AWS::SQS::Queue
+  aws_sns_topic: AWS::SNS::Topic
+
+  # Security
+  aws_kms_key: AWS::KMS::Key
+  aws_iam_role: AWS::IAM::Role
+  aws_secretsmanager_secret: AWS::SecretsManager::Secret
+
+  # Monitoring
+  aws_cloudwatch_log_group: AWS::Logs::LogGroup

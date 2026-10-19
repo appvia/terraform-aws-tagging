@@ -1,0 +1,14 @@
+version: 1
+accounts:
+  "123456789012":
+    name: prod
+    ou_path: root/workloads/prod
+    status: ACTIVE
+    tags:
+      CostCentre: "42"
+      Environment: production
+  "234567890123":
+    name: dev
+    ou_path: root/workloads/dev
+    status: ACTIVE
+    tags: {}
