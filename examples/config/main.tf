@@ -4,13 +4,33 @@
 # to build your own root module that invokes this module
 #####################################################################################
 
+## Provision the S3 bucket with the tagging policy
+module "tagging" {
+  source = "../../"
+
+  ## The tagging policy as YAML content
+  policy = file("${path.module}/tagging-policy.yaml")
+
+  ## S3 bucket configuration
+  bucket = {
+    name = "tagging-compliance-config"
+  }
+}
+
+## Provision the AWS Config rule to evaluate compliance
 module "config" {
   source = "../../modules/config"
 
-  ## The name of the DynamoDB table to store tags for AWS resources.
-  compliance_rule_table_arn = var.compliance_rule_table_arn
-  ## The name of the organization to allow access to the DynamoDB table
-  organizations_table_arn = var.organizations_table_arn
+  ## Policy bucket outputs
+  policy_bucket_name = module.tagging.bucket_name
+  policy_bucket_arn  = module.tagging.bucket_arn
+  policy_key         = module.tagging.policy_key
+  policy_version     = module.tagging.policy_version
+  mappings_key       = module.tagging.mappings_key
+  mappings_version   = module.tagging.mappings_version
+  accounts_key       = module.tagging.accounts_key
+  kms_key_arn        = module.tagging.kms_key_arn
+
   ## The name of the AWS Config rule to create
   config_name = "tagging-compliance-test"
   ## The resource types to evaluate for compliance
@@ -20,4 +40,3 @@ module "config" {
   ## The logging level for the Lambda function (e.g., "DEBUG", "INFO", "ERROR")
   lambda_log_level = "DEBUG"
 }
-

@@ -1,4 +1,5 @@
 """Loads and validates the tagging policy (config/tagging-policy.yaml)."""
+
 import re
 import sys
 from dataclasses import dataclass
@@ -11,8 +12,23 @@ ASSERT = "assert"
 TARGETS = ("type", "address", "tag", "organizational_path", "account_id", "account_tag")
 KEYED_TARGETS = ("tag", "account_tag")
 ACCOUNT_TARGETS = ("organizational_path", "account_tag")
-CASE_OPERATORS = ("is_pascal", "is_camel", "is_snake", "is_kebab", "is_lower", "is_upper")
-OPERATORS = ("present", "equals", "in", "contains", "starts_with", "ends_with", "matches") + CASE_OPERATORS
+CASE_OPERATORS = (
+    "is_pascal",
+    "is_camel",
+    "is_snake",
+    "is_kebab",
+    "is_lower",
+    "is_upper",
+)
+OPERATORS = (
+    "present",
+    "equals",
+    "in",
+    "contains",
+    "starts_with",
+    "ends_with",
+    "matches",
+) + CASE_OPERATORS
 BOOLEAN_OPERATORS = ("present",) + CASE_OPERATORS
 SEVERITIES = ("error", "warning")
 
@@ -77,7 +93,9 @@ def parse_policy(data):
     if type(version) is not int or version != VERSION:
         raise PolicyError(f"unsupported policy version {version!r}, expected {VERSION}")
     excluded = data.get("exclude_resource_types") or []
-    if not isinstance(excluded, list) or not all(isinstance(item, str) for item in excluded):
+    if not isinstance(excluded, list) or not all(
+        isinstance(item, str) for item in excluded
+    ):
         raise PolicyError("exclude_resource_types must be a list of strings")
     raw_rules = data.get("rules")
     if not isinstance(raw_rules, list):
@@ -110,7 +128,9 @@ def _parse_rule(raw, parent, seen):
     raw_steps = raw.get("steps")
     if not isinstance(raw_steps, list) or not raw_steps:
         raise PolicyError(f"{where}: steps must be a non-empty list")
-    steps = tuple(_parse_step(step, f"{where} step {i}") for i, step in enumerate(raw_steps, 1))
+    steps = tuple(
+        _parse_step(step, f"{where} step {i}") for i, step in enumerate(raw_steps, 1)
+    )
     raw_children = raw.get("rules", [])
     if not isinstance(raw_children, list):
         raise PolicyError(f"{where}: rules must be a list")
@@ -143,10 +163,14 @@ def _parse_condition(raw, where):
     operators = [operator for operator in OPERATORS if operator in raw]
     if target in KEYED_TARGETS:
         if len(operators) != 1:
-            raise PolicyError(f"{where} must have exactly one operator ({', '.join(OPERATORS)})")
+            raise PolicyError(
+                f"{where} must have exactly one operator ({', '.join(OPERATORS)})"
+            )
         keys = _strings(raw[target], f"{where}: {target}")
         operator = operators[0]
-        return Condition(target, keys, operator, _operand(operator, raw[operator], where), negate)
+        return Condition(
+            target, keys, operator, _operand(operator, raw[operator], where), negate
+        )
     if operators:
         raise PolicyError(
             f"{where}: write {target} as '{target}: value' or '{target}: {{operator: value}}'"
@@ -159,7 +183,9 @@ def _parse_condition(raw, where):
         if operator not in OPERATORS or operator == "present":
             allowed = ", ".join(op for op in OPERATORS if op != "present")
             raise PolicyError(f"{where}: {target} operator must be one of {allowed}")
-        return Condition(target, (), operator, _operand(operator, operand, where), negate)
+        return Condition(
+            target, (), operator, _operand(operator, operand, where), negate
+        )
     # Plain form: use "within" operator for organizational_path, "equals" for others
     operator = "within" if target == "organizational_path" else "equals"
     operand = _strings(value, f"{where}: {target}")
@@ -180,7 +206,9 @@ def _operand(operator, value, where):
             try:
                 re.compile(pattern)
             except re.error as err:
-                raise PolicyError(f"{where}: invalid regular expression {pattern!r}: {err}") from err
+                raise PolicyError(
+                    f"{where}: invalid regular expression {pattern!r}: {err}"
+                ) from err
     return operands
 
 

@@ -1,0 +1,65 @@
+---
+# Tagging policy demonstrating organization-wide features
+version: 1
+
+exclude_resource_types: []
+
+rules:
+  #
+  ## Required Tags
+  #
+  - name: required-tags
+    description: Every taggable resource carries the baseline tags
+    steps:
+      - assert: {tag: [Environment, Product, GitRepo], present: true}
+
+  #
+  ## Environment-specific rules using organizational_path
+  #
+  - name: production-backup-requirement
+    description: Production resources must have backup tiers configured
+    steps:
+      - filter: {organizational_path: root/Production}
+      - assert: {tag: BackupTiers, present: true}
+
+  - name: sandbox-nuke-tag
+    description: Sandbox resources must declare nuke preference
+    steps:
+      - filter: {organizational_path: root/Sandbox}
+      - assert: {tag: DisableNuke, in: ["true", "false"]}
+
+  #
+  ## Account-specific rules using account_id
+  #
+  - name: security-account-classification
+    description: Resources in security account must be classified
+    steps:
+      - filter: {account_id: ["123456789012"]}
+      - assert: {tag: SecurityClassification, present: true}
+
+  #
+  ## Account tag-based rules
+  #
+  - name: cost-centre-for-billable-accounts
+    description: Accounts tagged as billable must tag resources with CostCentre
+    steps:
+      - filter: {account_tag: Billable, equals: "true"}
+      - assert: {tag: CostCentre, present: true}
+
+  #
+  ## Mixed resource types (Terraform and AWS Config types)
+  #
+  - name: data-classification
+    description: S3 buckets and DynamoDB tables must declare data classification
+    steps:
+      - filter: {type: [aws_s3_bucket, AWS::DynamoDB::Table]}
+      - assert: {tag: DataClassification, in: [Public, Internal, Confidential, Restricted, Critical]}
+
+  #
+  ## Environment values validation
+  #
+  - name: environment-values
+    description: Environment is one of the allowed values
+    steps:
+      - filter: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [Production, Staging, Uat, Testing, Development, Sandbox]}

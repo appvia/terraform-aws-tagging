@@ -16,15 +16,12 @@ The framework supports two deployment patterns:
 │                    Management Account                            │
 │                                                                   │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Central DynamoDB Table                                   │  │
-│  │  (Compliance Rules Repository)                            │  │
+│  │  S3 Bucket (Policy Repository)                           │  │
+│  │  • policy.yaml (YAML tagging rules)                      │  │
+│  │  • mappings.yaml (Terraform → Config types)              │  │
+│  │  • accounts.yaml (inventory, optional)                   │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
 │                      │ Cross-account Read Access                │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Lambda Function                                          │  │
-│  │  (Evaluation Engine)                                      │  │
-│  │  Allows org-wide invocation                              │  │
-│  └───────────────────┬──────────────────────────────────────┘  │
 └──────────────────────┼───────────────────────────────────────────┘
                        │
        ┌───────────────┼───────────────┐
@@ -36,10 +33,11 @@ The framework supports two deployment patterns:
 │  AWS Config │ │  AWS Config │ │  AWS Config │
 │     Rule    │ │     Rule    │ │     Rule    │
 │      ↓      │ │      ↓      │ │      ↓      │
-│  Invokes    │ │  Invokes    │ │  Invokes    │
-│  Central    │ │  Central    │ │  Central    │
 │   Lambda    │ │   Lambda    │ │   Lambda    │
-│ (cross-acc) │ │ (cross-acc) │ │ (cross-acc) │
+│  (reads S3) │ │  (reads S3) │ │  (reads S3) │
+│      ↓      │ │      ↓      │ │      ↓      │
+│  Evaluates  │ │  Evaluates  │ │  Evaluates  │
+│   Policy    │ │   Policy    │ │   Policy    │
 └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
@@ -49,26 +47,28 @@ The framework supports two deployment patterns:
 │                    Management Account                            │
 │                                                                   │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Central DynamoDB Table                                   │  │
-│  │  (Compliance Rules Repository)                            │  │
+│  │  S3 Bucket (Policy Repository)                           │  │
+│  │  • policy.yaml (YAML tagging rules)                      │  │
+│  │  • mappings.yaml (Terraform → Config types)              │  │
+│  │  • accounts.yaml (inventory with tags)                   │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
 │                      │ Cross-account Read Access                │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Lambda Function                                          │  │
-│  │  (Evaluation Engine)                                      │  │
-│  │  Allows org-wide invocation                              │  │
-│  └───────────────────┬──────────────────────────────────────┘  │
-│                      │                                           │
+│  │  Organizations Lambda                                     │  │
+│  │  • Syncs account inventory to S3                         │  │
+│  │  • Triggers on account/OU/tag changes                    │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                   │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  S3 Bucket                                                │  │
+│  │  Pack S3 Bucket                                           │  │
 │  │  • conformance-pack.yaml template                        │  │
 │  │  • Versioning enabled                                    │  │
-│  │  • Encrypted with KMS                                    │  │
+│  │  • Encrypted                                             │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
 │                      │                                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  CloudFormation StackSet                                  │  │
-│  │  Deploys conformance pack to all accounts                │  │
+│  │  Organization Conformance Pack                            │  │
+│  │  Deploys Config rules to all accounts                    │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
 └──────────────────────┼───────────────────────────────────────────┘
                        │
@@ -80,21 +80,23 @@ The framework supports two deployment patterns:
 │             │ │             │ │             │
 │ Config Rule │ │ Config Rule │ │ Config Rule │
 │      ↓      │ │      ↓      │ │      ↓      │
-│  Invokes    │ │  Invokes    │ │  Invokes    │
-│  Central    │ │  Central    │ │  Central    │
 │   Lambda    │ │   Lambda    │ │   Lambda    │
-│ (via ConPack)│ │ (via ConPack)│ │ (via ConPack)│
+│  (reads S3) │ │  (reads S3) │ │  (reads S3) │
+│      ↓      │ │      ↓      │ │      ↓      │
+│  Evaluates  │ │  Evaluates  │ │  Evaluates  │
+│   Policy    │ │   Policy    │ │   Policy    │
 └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
 ### How It Works
 
-1. **Central Rule Management**: Tagging compliance rules are defined once in a central DynamoDB table (typically in the management or shared services account)
-2. **Organization-Wide Access**: The DynamoDB table has a resource policy allowing read access from all accounts in the AWS Organization
-3. **Per-Account Enforcement**: Each account deploys an AWS Config custom rule with a Lambda function
+1. **YAML Policy Definition**: Tagging compliance rules are defined once in a YAML policy file stored in S3 (typically in the management or shared services account)
+2. **Organization-Wide Access**: The S3 bucket has a policy allowing read access from all accounts in the AWS Organization
+3. **Per-Account Enforcement**: Each account deploys an AWS Config custom rule with a Lambda function (via per-account rules or organization conformance pack)
 4. **Real-Time Validation**: When resources are created or modified, AWS Config invokes the Lambda function
-5. **Compliance Evaluation**: The Lambda reads rules from the central table and validates the resource's tags
+5. **Compliance Evaluation**: The Lambda loads the policy from S3 (with caching and ETag revalidation) and evaluates the resource's tags against the rules
 6. **Reporting**: Compliance status is reported back to AWS Config, providing visibility in the AWS Console and enabling automated remediation
+7. **Automatic Re-evaluation**: Policy changes trigger Config to re-evaluate all resources via version hash parameters; inventory changes (account moves, tag updates) trigger re-evaluation via the organizations Lambda
 
 ### Key Features
 
@@ -111,30 +113,25 @@ The framework supports two deployment patterns:
 
 ## Modules
 
-This framework consists of five modular components:
+This framework consists of four modular components:
 
 ### 1. Root Module (This Module)
-Creates the central DynamoDB table with organization-wide access policies. Deploy this in your management or shared services account.
+Provisions the S3 bucket with the tagging policy, resource type mappings, and optional account inventory. Deploy this in your management or shared services account.
 
 **[Documentation](./README.md)**
 
 ### 2. Validation Module
-Manages the Lambda function for evaluating tagging compliance. Handles IAM roles, permissions, and CloudWatch Logs integration. Can be shared across multiple Config rules and accounts.
+Contains the Lambda function that evaluates resource compliance against the YAML policy. Includes the policy parser, evaluation engine, and S3 caching layer. Automatically used by Config and Pack modules.
 
 **[📖 Validation Module Documentation](./modules/validation/README.md)**
 
 ### 3. Config Module
-Deploys AWS Config custom rules in individual accounts. References the Lambda function from validation module to evaluate resource compliance. Can invoke Lambda in the same account or cross-account (from management account).
+Deploys AWS Config custom rules in individual accounts with a validation Lambda. Reads the policy, mappings, and inventory from the S3 bucket created by the root module.
 
 **[📖 Config Module Documentation](./modules/config/README.md)**
 
-### 4. Compliance Module
-Stores tagging compliance rules in the central DynamoDB table. Use this to define your organization's tagging standards that Lambda evaluates.
-
-**[📖 Compliance Module Documentation](./modules/compliance/README.md)**
-
-### 5. Pack Module
-Wraps the Lambda evaluator into an AWS Config Conformance Pack for organization-wide or account-level distribution. Handles S3 storage, versioning, and deployment via CloudFormation StackSets.
+### 4. Pack Module
+Wraps the validation Lambda into an AWS Config Conformance Pack for organization-wide distribution. Handles S3 template storage, versioning, and deployment via Organizations. Automatically re-evaluates on policy and inventory changes.
 
 **[📖 Pack Module Documentation](./modules/pack/README.md)**
 
@@ -656,79 +653,127 @@ Verify the resource type is in the Config rule scope:
 aws configservice describe-config-rules --config-rule-names tagging-compliance
 ```
 
-## DynamoDB Capacity Planning
+## Upgrading from DynamoDB
 
-### Understanding RCU and WCU
+Version 2.0 replaced DynamoDB-based rule storage with a YAML tagging policy stored in S3. This is a breaking change.
 
-DynamoDB uses two billing metrics to measure capacity:
+### Migration Steps
 
-- **Read Capacity Units (RCU)**: One RCU represents one strongly consistent read per second of items up to 4 KB in size. If you need to read larger items or use eventually consistent reads, the calculation changes accordingly. See [AWS DynamoDB Read/Write Capacity Mode](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadWriteCapacityMode.html) for details.
+1. **Export existing DynamoDB rules** to a YAML policy file:
 
-- **Write Capacity Units (WCU)**: One WCU represents one write per second of items up to 1 KB in size. Larger items consume proportionally more WCUs. See [AWS DynamoDB Provisioned Throughput](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ProvisionedThroughput.html) for details.
+| DynamoDB Attribute | YAML Policy Mapping |
+|--------------------|---------------------|
+| `Tag` | `assert: {tag: <Tag>, ...}` in a rule's `steps` |
+| `Values` (list) | `assert: {tag: <Tag>, in: [<Values>]}` |
+| `ValuePattern` (regex) | `assert: {tag: <Tag>, matches: "<ValuePattern>"}` |
+| `Required: true` | `assert: {tag: <Tag>, present: true}` |
+| `Required: false` | `filter: {tag: <Tag>, present: true}` before assert (optional tags only checked if present) |
+| `ResourceTypes` | `filter: {type: [<ResourceTypes>]}` (supports both Terraform names like `aws_s3_bucket` and AWS Config types like `AWS::S3::Bucket`) |
+| `AccountIds` | `filter: {account_id: [<AccountIds>]}` (omit wildcards; no filter = all accounts) |
+| `OrganizationalPaths` | `filter: {organizational_path: <path>}` (e.g., `root/Production` matches that OU and children) |
 
-**Billing Modes:**
-- **On-Demand**: Pay per request (~$1.25 per million reads, ~$6.25 per million writes). Best for unpredictable workloads
-- **Provisioned**: Reserve capacity upfront (cheaper for predictable workloads). This framework defaults to `PAY_PER_REQUEST`
+Example conversion:
+```yaml
+# DynamoDB rule:
+# { RuleId: "s3-env-tag", ResourceTypes: ["AWS::S3::*"], Tag: "Environment",
+#   Values: ["Production", "Development"], Required: true, AccountIds: ["*"] }
 
-### Capacity Estimation Formula
-
-Your DynamoDB capacity depends on:
-
-1. **Number of AWS Accounts**: `N_accounts`
-2. **Resource Types in Scope**: `N_resource_types` (e.g., EC2, S3, RDS)
-3. **Total Resources**: `N_resources` (average per account)
-4. **Resource Change Frequency**: `changes_per_day` (creation/modification rate)
-5. **Config Evaluation Frequency**: `evaluation_interval` (Six_Hours, TwentyFour_Hours, etc.)
-
-**Estimated Reads per Lambda Invocation**: 2-3 reads
-- 1 read to scan/query compliance rules
-- 1 read per resource type for rule matching
-
-**Estimated Writes per Lambda Invocation**: ~1 write
-- Optional: Update compliance state in DynamoDB (or use AWS Config for state)
-
-**Capacity Calculation:**
-```
-Daily Reads = (N_accounts × N_resources × changes_per_day × 2.5)
-            + (N_accounts × N_resources × (24 ÷ evaluation_interval_hours))
-
-Daily Writes = (N_accounts × N_resources × changes_per_day × 1)
-             + (rule_updates_per_day)
-
-RCU = (Daily Reads ÷ 86,400 seconds) × 1.5  # 1.5x buffer for spikes
-WCU = (Daily Writes ÷ 86,400 seconds) × 1.5 # 1.5x buffer for spikes
+# YAML policy:
+version: 1
+rules:
+  - name: s3-env-tag
+    description: S3 buckets must have Environment tag with valid values
+    steps:
+      - filter: {type: aws_s3_bucket}
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [Production, Development]}
 ```
 
-Note the AWS Config rule can be configured to use caching on the ruleset to greatly reduce associated costs, with the downside being the additional time is now takes to roll changes to the rules.
+2. **Validate the policy** with the built-in validator:
+```bash
+python3 modules/validation/assets/policy.py tagging-policy.yaml
+```
 
-### Cost Optimization Tips
-
-1. **Start with On-Demand**: Use the default `PAY_PER_REQUEST` billing mode to test your workload
-2. **Monitor CloudWatch Metrics**: Track consumed capacity over 2-4 weeks
-3. **Consider Provisioned Mode**: Switch to provisioned if consistent reads exceed 1M/day
-4. **Enable TTL**: Set a time-to-live on compliance history items to automatically delete old data
-5. **Rule Caching**: The Lambda handler implements in-memory caching to reduce DynamoDB reads by 80%+
-6. **DAX Consideration**: For very large deployments, consider DynamoDB Accelerator (DAX) for additional caching
-
-### Changing Billing Mode
-
+3. **Update the root module** configuration:
 ```hcl
-# Switch from on-demand to provisioned (update variables)
-module "tagging_compliance_central" {
+# Before (DynamoDB)
+module "tagging" {
   source = "appvia/tagging/aws"
+  version = "~> 1.0"
 
   compliance = {
     table = {
-      name           = "tagging-compliance-rules"
-      billing_mode   = "PROVISIONED"
-      read_capacity  = 100
-      write_capacity = 20
+      name = "tagging-compliance"
     }
   }
+  rules = [...]  # DynamoDB rules
+}
 
-  # ... other variables
+# After (S3 + YAML policy)
+module "tagging" {
+  source = "appvia/tagging/aws"
+  version = "~> 2.0"
+
+  policy = file("${path.module}/tagging-policy.yaml")
+  bucket = {
+    name = "tagging-compliance"
+  }
 }
 ```
+
+4. **Update config/pack modules** to pass the new S3 outputs:
+```hcl
+# Before
+module "config" {
+  source = "appvia/tagging/aws//modules/config"
+  compliance_rule_table_arn = module.tagging.compliance_rule_table_arn
+  # ...
+}
+
+# After
+module "config" {
+  source = "appvia/tagging/aws//modules/config"
+  policy_bucket_name = module.tagging.bucket_name
+  policy_bucket_arn  = module.tagging.bucket_arn
+  policy_key         = module.tagging.policy_key
+  policy_version     = module.tagging.policy_version
+  mappings_key       = module.tagging.mappings_key
+  mappings_version   = module.tagging.mappings_version
+  accounts_key       = module.tagging.accounts_key
+  kms_key_arn        = module.tagging.kms_key_arn
+  # ...
+}
+```
+
+### Removed Variables and Outputs
+
+**Removed root module variables:**
+- `compliance` (object with `table` configuration)
+- `rules` (list of DynamoDB rule objects)
+
+**Removed root module outputs:**
+- `compliance_rule_table_arn`
+- `compliance_rule_table_name`
+- `organizations_table_arn`
+- `organizations_table_name`
+
+**Removed config/pack module variables:**
+- `compliance_rule_table_arn`
+- `organizations_table_arn`
+
+### New Features
+
+The YAML policy format adds:
+- **Organizational path filtering**: `filter: {organizational_path: root/Production}` matches accounts in that OU subtree
+- **Account tag filtering**: `filter: {account_tag: CostCentre, present: true}` requires account-level tags
+- **Mixed resource type formats**: `filter: {type: [aws_s3_bucket, AWS::DynamoDB::Table]}` supports both Terraform and Config types in one rule
+- **Richer operators**: `contains`, `starts_with`, `ends_with`, `matches` (regex), case operators (`is_kebab`, `is_snake`, etc.)
+- **Severity levels**: `severity: warning` (logged, but resource is COMPLIANT) vs `severity: error` (NON_COMPLIANT, the default)
+
+### Known Limitations
+
+- **CI action compatibility**: The `terraform-tag-check` action in `appvia-cicd-workflows` does not yet support `AWS::` types or the new `organizational_path`, `account_id`, `account_tag` targets. Policies using these features will be rejected by the action.
+- **Per-account config rules**: Inventory changes (account moves, tag updates) do not automatically trigger re-evaluation for per-account config module rules. Use the pack module (organization conformance pack) for automatic re-evaluation.
 
 ## Update Documentation
 
