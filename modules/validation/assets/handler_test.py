@@ -223,6 +223,31 @@ class TestResource:
         assert resource.ResourceId == "vol-0f750e39c7f491a40"
         assert resource.Tags == {}
 
+    def test_parse_configuration_item_null_top_level_tags(self):
+        """Test parsing when the top level tags map is null, as sent for deleted resources."""
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::S3::Bucket",
+            "resourceId": "my-bucket",
+            "ARN": None,
+            "tags": None,
+            "configuration": None,
+        }
+        resource = handler.Resource.parse(item)
+        assert resource.Tags == {}
+
+    def test_parse_configuration_item_no_tags(self):
+        """Test parsing when configuration has no tags."""
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::EC2::Instance",
+            "resourceId": "i-0abcd1234",
+            "ARN": "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234",
+            "configuration": {},
+        }
+        resource = handler.Resource.parse(item)
+        assert resource.Tags == {}
+
 
 # ============================================================================
 # Tests for evaluate function
@@ -392,19 +417,32 @@ class TestEvaluate:
         assert "no applicable rules" in annotation.lower()
 
     def test_account_missing_from_inventory(self):
-        """Account missing from inventory builds Subject with account=None and logs warning."""
-        resource = handler.Resource(
-            ARN="arn:aws:ec2:eu-west-2:999999999999:instance/i-123",
-            AccountId="999999999999",
-            ResourceType="AWS::EC2::Instance",
-            ResourceId="i-123",
-            Tags={},
-        )
-        policy = Policy(exclude_resource_types=frozenset(), rules=())
-        mappings = Mappings(
-            to_config={"aws_ec2_instance": "AWS::EC2::Instance"},
-            to_terraform={"AWS::EC2::Instance": ("aws_ec2_instance",)},
-        )
+        """Account missing from inventory: OU rule skipped, tag rule violated, one warning."""
+        from policy import load_policy_text
+        from store import parse_mappings
+
+        # Real policy with OU rule and tag rule
+        policy_text = """
+version: 1
+rules:
+  - name: ou-rule
+    steps:
+      - filter: {organizational_path: root/workloads}
+      - assert: {tag: Department, present: true}
+  - name: tag-rule
+    steps:
+      - assert: {tag: Environment, present: true}
+"""
+        policy = load_policy_text(policy_text)
+
+        # Real mappings
+        mappings_text = """
+version: 1
+mappings:
+  aws_ec2_instance: AWS::EC2::Instance
+"""
+        mappings = parse_mappings(mappings_text)
+
         # Inventory exists but doesn't contain account 999999999999
         inventory = {
             "123456789012": Account(
@@ -416,29 +454,34 @@ class TestEvaluate:
             )
         }
 
-        outcome = Outcome(
-            violations=(),
-            asserted=True,
-            skipped_rules=("ou-rule",),
+        # Resource without Environment tag
+        resource = handler.Resource(
+            ARN="arn:aws:ec2:eu-west-2:999999999999:instance/i-123",
+            AccountId="999999999999",
+            ResourceType="AWS::EC2::Instance",
+            ResourceId="i-123",
+            Tags={},
         )
 
-        with patch("handler.check_subject", return_value=outcome) as mock_check:
-            with patch("handler.logger") as mock_logger:
-                compliance_type, annotation = handler.evaluate(
-                    resource, policy, mappings, inventory
-                )
+        with patch("handler.logger") as mock_logger:
+            compliance_type, annotation = handler.evaluate(
+                resource, policy, mappings, inventory
+            )
 
-                # Verify Subject was built with account=None
-                call_args = mock_check.call_args
-                subject = call_args[0][1]
-                assert subject.account is None
+        # NON_COMPLIANT because tag-rule failed
+        assert compliance_type == handler.COMPLIANCE_TYPE_NON_COMPLIANT
+        # Annotation should mention tag-rule but not ou-rule
+        assert "tag-rule" in annotation
+        assert "Environment" in annotation
+        assert "ou-rule" not in annotation
 
-                # Verify warning was logged
-                mock_logger.warning.assert_called_once()
-                log_call = mock_logger.warning.call_args
-                assert "account not found in inventory" in log_call[0][0].lower()
-
-        assert compliance_type == handler.COMPLIANCE_TYPE_COMPLIANT
+        # Exactly one warning about account not found
+        warning_calls = [
+            call
+            for call in mock_logger.warning.call_args_list
+            if "account not found in inventory" in call[0][0].lower()
+        ]
+        assert len(warning_calls) == 1
 
     def test_annotation_truncated(self):
         """Many violations result in annotation truncated to 256 chars ending in ..."""
@@ -475,6 +518,153 @@ class TestEvaluate:
         assert compliance_type == handler.COMPLIANCE_TYPE_NON_COMPLIANT
         assert len(annotation) == 256
         assert annotation.endswith("...")
+
+    def test_skipped_rules_deduplication(self):
+        """Two evaluate calls with distinct Policy objects but same skipped rules → one log."""
+        from policy import load_policy_text
+        from store import parse_mappings
+
+        policy_text = """
+version: 1
+rules:
+  - name: ou-rule
+    steps:
+      - filter: {organizational_path: root/workloads}
+      - assert: {tag: Department, present: true}
+"""
+        mappings_text = """
+version: 1
+mappings:
+  aws_ec2_instance: AWS::EC2::Instance
+"""
+
+        # Parse twice to get distinct Policy objects
+        policy1 = load_policy_text(policy_text)
+        policy2 = load_policy_text(policy_text)
+        assert id(policy1) != id(policy2)  # Distinct objects
+
+        mappings = parse_mappings(mappings_text)
+        inventory = None  # No inventory → rules with OU filters are skipped
+
+        resource = handler.Resource(
+            ARN="arn:aws:ec2:eu-west-2:123456789012:instance/i-123",
+            AccountId="123456789012",
+            ResourceType="AWS::EC2::Instance",
+            ResourceId="i-123",
+            Tags={},
+        )
+
+        # Clear the module-level set before test
+        handler._logged_skipped_rules.clear()
+
+        with patch("handler.logger") as mock_logger:
+            # First call
+            handler.evaluate(resource, policy1, mappings, inventory)
+            # Second call with distinct policy object
+            handler.evaluate(resource, policy2, mappings, inventory)
+
+        # Should have exactly one info log about skipped rules
+        info_calls = [
+            call
+            for call in mock_logger.info.call_args_list
+            if "rules skipped" in call[0][0].lower()
+        ]
+        assert len(info_calls) == 1
+
+    def test_no_skipped_rules_no_log(self):
+        """Policy with no OU/account_tag rules → no 'rules skipped' log."""
+        from policy import load_policy_text
+        from store import parse_mappings
+
+        policy_text = """
+version: 1
+rules:
+  - name: tag-rule
+    steps:
+      - assert: {tag: Environment, present: true}
+"""
+        policy = load_policy_text(policy_text)
+
+        mappings_text = """
+version: 1
+mappings:
+  aws_ec2_instance: AWS::EC2::Instance
+"""
+        mappings = parse_mappings(mappings_text)
+        inventory = None  # No inventory
+
+        resource = handler.Resource(
+            ARN="arn:aws:ec2:eu-west-2:123456789012:instance/i-123",
+            AccountId="123456789012",
+            ResourceType="AWS::EC2::Instance",
+            ResourceId="i-123",
+            Tags={"Environment": "Production"},
+        )
+
+        handler._logged_skipped_rules.clear()
+
+        with patch("handler.logger") as mock_logger:
+            handler.evaluate(resource, policy, mappings, inventory)
+
+        # Should have no info log about skipped rules
+        info_calls = [
+            call
+            for call in mock_logger.info.call_args_list
+            if "rules skipped" in call[0][0].lower()
+        ]
+        assert len(info_calls) == 0
+
+    def test_subject_wiring(self):
+        """terraform_types and tags properly wired to Subject."""
+        from policy import load_policy_text
+        from store import parse_mappings
+
+        policy_text = """
+version: 1
+rules:
+  - name: require-owner
+    steps:
+      - filter: {type: aws_s3_bucket}
+      - assert: {tag: Owner, present: true}
+"""
+        policy = load_policy_text(policy_text)
+
+        mappings_text = """
+version: 1
+mappings:
+  aws_s3_bucket: AWS::S3::Bucket
+"""
+        mappings = parse_mappings(mappings_text)
+        inventory = None
+
+        # Resource with Owner tag → COMPLIANT
+        resource_with_owner = handler.Resource(
+            ARN="arn:aws:s3:::my-bucket",
+            AccountId="123456789012",
+            ResourceType="AWS::S3::Bucket",
+            ResourceId="my-bucket",
+            Tags={"Owner": "team@example.com"},
+        )
+
+        compliance_type, _ = handler.evaluate(
+            resource_with_owner, policy, mappings, inventory
+        )
+        assert compliance_type == handler.COMPLIANCE_TYPE_COMPLIANT
+
+        # Resource without Owner tag → NON_COMPLIANT
+        resource_without_owner = handler.Resource(
+            ARN="arn:aws:s3:::my-bucket",
+            AccountId="123456789012",
+            ResourceType="AWS::S3::Bucket",
+            ResourceId="my-bucket",
+            Tags={},
+        )
+
+        compliance_type, annotation = handler.evaluate(
+            resource_without_owner, policy, mappings, inventory
+        )
+        assert compliance_type == handler.COMPLIANCE_TYPE_NON_COMPLIANT
+        assert "Owner" in annotation
 
 
 # ============================================================================
@@ -726,3 +916,96 @@ class TestLambdaHandler:
         """Test lambda handler fails when required env var is missing."""
         with pytest.raises(ValueError, match="required but not set"):
             handler.lambda_handler(sample_config_event, None)
+
+    @patch.dict(
+        os.environ,
+        {
+            "POLICY_BUCKET": "test-bucket",
+        },
+    )
+    @patch("handler.config_client")
+    def test_lambda_handler_deleted_resource_null_arn(
+        self, mock_config_client, sample_config_event
+    ):
+        """Test lambda handler with deleted resource (null ARN, ResourceDeleted status)."""
+        # AWS Config sends null ARN and configuration once resource is gone
+        event = sample_config_event.copy()
+        invoking_event = json.loads(event["invokingEvent"])
+        invoking_event["configurationItem"][
+            "configurationItemStatus"
+        ] = "ResourceDeleted"
+        invoking_event["configurationItem"]["ARN"] = None
+        invoking_event["configurationItem"]["configuration"] = None
+        event["invokingEvent"] = json.dumps(invoking_event)
+
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(event, None)
+
+        # Verify put_evaluations called once with NOT_APPLICABLE
+        mock_config_client.put_evaluations.assert_called_once()
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        evaluation = call_args["Evaluations"][0]
+        assert evaluation["ComplianceType"] == handler.COMPLIANCE_TYPE_NOT_APPLICABLE
+
+    @patch.dict(
+        os.environ,
+        {
+            "POLICY_BUCKET": "test-bucket",
+            "POLICY_KEY": "policy.yaml",
+            "MAPPINGS_KEY": "mappings.yaml",
+        },
+    )
+    @patch("handler.store")
+    @patch("handler.config_client")
+    def test_lambda_handler_end_to_end(
+        self, mock_config_client, mock_store, sample_config_event
+    ):
+        """End-to-end test with real Policy/Mappings, verifying exact put_evaluations call."""
+        from policy import load_policy_text
+        from store import parse_mappings
+
+        # Real policy requiring Environment tag
+        policy_text = """
+version: 1
+rules:
+  - name: require-environment
+    steps:
+      - assert: {tag: Environment, present: true}
+"""
+        policy = load_policy_text(policy_text)
+
+        # Real mappings
+        mappings_text = """
+version: 1
+mappings:
+  aws_ec2_instance: AWS::EC2::Instance
+"""
+        mappings = parse_mappings(mappings_text)
+
+        # Mock store to return real objects
+        mock_store.load_policy.return_value = policy
+        mock_store.load_mappings.return_value = mappings
+        mock_store.load_inventory.return_value = None
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(sample_config_event, None)
+
+        # Verify exact put_evaluations call
+        mock_config_client.put_evaluations.assert_called_once()
+        call_args = mock_config_client.put_evaluations.call_args[1]
+
+        # Check Evaluations list
+        evaluations = call_args["Evaluations"]
+        assert len(evaluations) == 1
+        evaluation = evaluations[0]
+
+        # Verify exact fields
+        assert evaluation["ComplianceResourceType"] == "AWS::EC2::Instance"
+        assert evaluation["ComplianceResourceId"] == "i-0abcd1234efgh5678"
+        assert evaluation["ComplianceType"] == handler.COMPLIANCE_TYPE_COMPLIANT
+        assert "compliant" in evaluation["Annotation"].lower()
+        assert "OrderingTimestamp" in evaluation
+
+        # Verify ResultToken
+        assert call_args["ResultToken"] == "test-result-token-12345"

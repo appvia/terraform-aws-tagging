@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Optional, Set, Tuple
 
 import boto3
 
@@ -36,8 +36,8 @@ COMPLIANT_ANNOTATION = "Resource is compliant with tagging rules"
 # The AWS Config client used to report compliance evaluations back to AWS Config.
 config_client = boto3.client("config")
 
-# Module-level set to track policies for which we've logged the "rules ignored" message
-_logged_no_inventory = set()
+# Module-level set to track which rule sets we've logged the "rules ignored" message for
+_logged_skipped_rules: Set[FrozenSet[str]] = set()
 
 
 # Resource class representing the AWS resource being evaluated, extracted from the AWS Config event.
@@ -96,132 +96,6 @@ class Resource:
             ResourceId=raw.get("resourceId", None),
             Tags=tags,
         )
-
-
-@dataclass
-class Evaluation:
-    # The compliance status (COMPLIANT, NON_COMPLIANT, NOT_APPLICABLE).
-    Compliant: str = ""
-    # The tag key that was evaluated.
-    TagKey: str = ""
-    # The tag value that was evaluated (or null if the tag is not present on the resource).
-    TagValue: str | None = None
-    # An optional string providing details about the evaluation of this rule.
-    Annotation: str = ""
-    # The rule id if any specific rule was evaluated, which can be used for debugging
-    # and tracing back to the rule definition.
-    RuleId: str = ""
-
-
-@dataclass
-class Evaluations:
-    # A list of evaluations for a resource against the rules
-    Evaluations: list = field(default_factory=list)
-
-    def is_compliant(self) -> bool:
-        """
-        Checks if the evaluation contains any non-compliant results, while ensuring that
-        if the resource is marked as not applicable, we return false for compliant.
-
-        Returns:
-            True if all evaluations are compliant and the resource is not marked as not applicable, False otherwise
-        """
-
-        # Ensure we return false to non-applicable resources
-        if self.is_non_applicable():
-            return True
-
-        return all(
-            evaluation.Compliant == COMPLIANCE_TYPE_COMPLIANT
-            for evaluation in self.Evaluations
-        )
-
-    def status(self) -> str:
-        """
-        Get the overall compliance status based on the evaluations.
-
-        Returns:
-            COMPLIANT if all evaluations are compliant,
-            NON_COMPLIANT if any evaluation is non-compliant,
-            NOT_APPLICABLE if any evaluation is not applicable and none are non-compliant.
-        """
-
-        if self.is_non_applicable():
-            return COMPLIANCE_TYPE_NOT_APPLICABLE
-        elif self.is_compliant():
-            return COMPLIANCE_TYPE_COMPLIANT
-        else:
-            return COMPLIANCE_TYPE_NON_COMPLIANT
-
-    def is_non_applicable(self) -> bool:
-        """Checks if the evaluation is marked as not applicable."""
-
-        return any(
-            evaluation.Compliant == COMPLIANCE_TYPE_NOT_APPLICABLE
-            for evaluation in self.Evaluations
-        )
-
-    def add(self, evaluation: Evaluation) -> None:
-        """Add an evaluation to the list of evaluations for this resource."""
-
-        self.Evaluations.append(evaluation)
-
-    def add_not_applicable(
-        self,
-        annotation: str | None = None,
-        rule_id: str | None = None,
-    ) -> None:
-        """Mark the resource as not applicable for tagging compliance with an annotation."""
-
-        self.add(
-            Evaluation(
-                Compliant=COMPLIANCE_TYPE_NOT_APPLICABLE,
-                Annotation=annotation or "",
-                RuleId=rule_id or "",
-            )
-        )
-
-    def add_compliant(
-        self,
-        annotation: str,
-        rule_id: str,
-    ) -> None:
-        """Mark the resource as compliant for tagging compliance with an annotation."""
-
-        self.add(
-            Evaluation(
-                Annotation=annotation,
-                Compliant=COMPLIANCE_TYPE_COMPLIANT,
-                RuleId=rule_id,
-            )
-        )
-
-    def add_non_compliant(
-        self,
-        annotation: str,
-        rule_id: str,
-        tag_key: str = "",
-        value: str | None = None,
-    ) -> None:
-        """Mark the resource as non-compliant for tagging compliance with an annotation."""
-        self.add(
-            Evaluation(
-                Annotation=annotation,
-                Compliant=COMPLIANCE_TYPE_NON_COMPLIANT,
-                RuleId=rule_id,
-                TagKey=tag_key,
-                TagValue=value,
-            )
-        )
-
-    def get_non_compliance_reasons(self) -> list:
-        """Get a list of annotations for all non-compliant evaluations."""
-
-        return [
-            evaluation.Annotation
-            for evaluation in self.Evaluations
-            if evaluation.Compliant == COMPLIANCE_TYPE_NON_COMPLIANT
-        ]
 
 
 # Default logger for all log messages in this module, configured to emit JSON-formatted logs to stdout.
@@ -380,18 +254,6 @@ def evaluate(
                     "resource_type": resource.ResourceType,
                 },
             )
-    else:
-        # Inventory is not configured - log once per policy
-        policy_id = id(policy)
-        if policy_id not in _logged_no_inventory:
-            _logged_no_inventory.add(policy_id)
-            logger.info(
-                "Inventory not configured, rules using organizational_path or account_tag will be ignored",
-                extra={
-                    "action": "evaluate",
-                    "policy_id": policy_id,
-                },
-            )
 
     subject = Subject(
         config_type=resource.ResourceType,
@@ -403,6 +265,21 @@ def evaluate(
 
     # Run the policy engine
     outcome = check_subject(policy, subject)
+
+    # Log when rules are skipped due to missing inventory, deduplicating by the set of skipped rules
+    if outcome.skipped_rules:
+        skipped_key = frozenset(outcome.skipped_rules)
+        if skipped_key not in _logged_skipped_rules:
+            _logged_skipped_rules.add(skipped_key)
+            logger.info(
+                "Rules skipped due to missing account inventory",
+                extra={
+                    "action": "evaluate",
+                    "skipped_rules": list(outcome.skipped_rules),
+                    "resource_type": resource.ResourceType,
+                    "account_id": resource.AccountId,
+                },
+            )
 
     # Log warnings
     for violation in outcome.violations:
