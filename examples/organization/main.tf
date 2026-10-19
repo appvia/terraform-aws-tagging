@@ -9,6 +9,11 @@ data "aws_organizations_organization" "current" {}
 locals {
   ## The organization id which is used in the policy
   organizations_id = data.aws_organizations_organization.current.id
+  ## The name of the organization conformance pack
+  conformance_pack_name = "tagging-compliance"
+  ## The bucket and key of the conformance pack template, shared with the pack module
+  pack_bucket_name  = "tagging-compliance-pack-templates"
+  pack_template_key = "conformance-packs/tagging-compliance.yaml"
 }
 
 ## Provision the S3 bucket with the tagging policy and organizations support
@@ -27,14 +32,14 @@ module "tagging" {
   enable_organizations = true
   organizations_id     = local.organizations_id
 
-  ## Enable the organizations inventory lambda
-  ## NOTE: On first apply, comment out conformance_pack_name and conformance_pack_template_uri
-  ## to avoid a circular dependency. After the pack module is created, uncomment these to enable
-  ## automatic re-evaluation when the inventory changes.
+  ## Enable the organizations inventory lambda, re-putting the conformance pack when the
+  ## inventory changes. The template URI is built from the same locals passed to the pack
+  ## module: referencing module.pack.s3_template_uri here would create a dependency cycle,
+  ## as the pack module consumes this module's accounts_key output.
   organizations = {
-    # conformance_pack_name         = "tagging-compliance"
-    # conformance_pack_template_uri = module.pack.s3_template_uri
-    enable_account_event_sync = true
+    conformance_pack_name         = local.conformance_pack_name
+    conformance_pack_template_uri = format("s3://%s/%s", local.pack_bucket_name, local.pack_template_key)
+    enable_account_event_sync     = true
     lambda = {
       name        = "organization-compliance"
       description = "Manages account inventory for tagging compliance"
@@ -63,10 +68,11 @@ module "pack" {
   ## the inventory written by the organizations lambda.
   inventory_version = "none"
 
-  ## S3 bucket for conformance pack template storage
-  s3_bucket_name = "tagging-compliance-pack-templates"
+  ## S3 bucket and key for conformance pack template storage
+  s3_bucket_name  = local.pack_bucket_name
+  s3_template_key = local.pack_template_key
 
   ## Conformance pack configuration
-  conformance_pack_name    = "tagging-compliance"
+  conformance_pack_name    = local.conformance_pack_name
   deploy_organization_wide = true
 }

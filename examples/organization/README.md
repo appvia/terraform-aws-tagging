@@ -56,8 +56,8 @@ Use this organizations example when:
 
 After deploying this example:
 
-1. **Bootstrap**: On first apply, `inventory_version = "none"` and conformance pack references are commented out (see inline comments)
-2. **Second Apply**: After first apply succeeds, uncomment the conformance pack references in the organizations block to enable automatic re-evaluation
+1. **Bootstrap**: On first apply, `inventory_version = "none"` is passed to the pack module because the bucket does not exist at plan time (see inline comments)
+2. **Second Apply**: After first apply succeeds, remove `inventory_version` so the pack follows the inventory written by the organizations lambda
 3. **Update Policy**: Edit `tagging-policy.yaml` and run `terraform apply` - changes trigger org-wide re-evaluation
 4. **Monitor**: Use AWS Config console to view compliance status across all accounts
 
@@ -79,6 +79,14 @@ To customize this example:
 ```hcl
 data "aws_organizations_organization" "current" {}
 
+locals {
+  # Shared by both modules; do not use module.pack.s3_template_uri in the
+  # organizations block, as the pack consumes module.tagging.accounts_key (a cycle)
+  pack_name         = "my-tagging-pack"
+  pack_bucket_name  = "my-pack-templates"
+  pack_template_key = "conformance-packs/tagging-compliance.yaml"
+}
+
 module "tagging" {
   source = "../../"
 
@@ -97,8 +105,8 @@ module "tagging" {
 
   # Configure the organizations Lambda
   organizations = {
-    conformance_pack_name         = "my-tagging-pack"
-    conformance_pack_template_uri = module.pack.s3_template_uri
+    conformance_pack_name         = local.pack_name
+    conformance_pack_template_uri = format("s3://%s/%s", local.pack_bucket_name, local.pack_template_key)
     enable_account_event_sync     = true
     lambda = {
       name      = "my-org-inventory"
@@ -124,8 +132,9 @@ module "pack" {
   accounts_key       = module.tagging.accounts_key
   kms_key_arn        = module.tagging.kms_key_arn
 
-  s3_bucket_name           = "my-pack-templates"
-  conformance_pack_name    = "my-tagging-pack"
+  s3_bucket_name           = local.pack_bucket_name
+  s3_template_key          = local.pack_template_key
+  conformance_pack_name    = local.pack_name
   deploy_organization_wide = true
 }
 ```
