@@ -107,14 +107,23 @@ class Resource:
                     f"Configuration item is missing required field '{field_name}', cannot evaluate resource."
                 )
 
-        # Retrieve the tags from the configuration item, which are nested under the "configuration" key
+        # Retrieve the tags from the configuration item. AWS Config reports these in
+        # two places: some resource types (EC2 among them) embed them in the
+        # "configuration" blob, while the configuration item itself always carries a
+        # top level "tags" map. We read both, so resource types that only populate
+        # one of them are still evaluated against the tags they actually carry.
         tags = {}
         configuration = raw.get("configuration") or {}
 
-        # We need to parse the tags from the configuration item
+        # Tags embedded in the configuration blob are a list of {key, value} pairs
         for tag in configuration.get("tags") or []:
             if "key" in tag and "value" in tag:
                 tags[tag["key"]] = tag["value"]
+
+        # Tags on the configuration item itself are a plain key to value map, and are
+        # the canonical source, so they take precedence where both are populated
+        for tag_key, tag_value in (raw.get("tags") or {}).items():
+            tags[tag_key] = tag_value
 
         return cls(
             AccountId=raw.get("awsAccountId", None),

@@ -656,6 +656,53 @@ class TestParseConfigurationItem:
         assert resource.ResourceType == "AWS::Lambda::Function"
         assert resource.Tags == {}
 
+    def test_parse_configuration_item_top_level_tags(self):
+        """Test parsing tags from the top level 'tags' map on the configuration item."""
+        # AWS Config reports tags for most resource types in the top level 'tags'
+        # map; only a handful embed them in the configuration blob.
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::S3::Bucket",
+            "resourceId": "my-bucket",
+            "ARN": "arn:aws:s3:::my-bucket",
+            "tags": {"Environment": "Production", "Owner": "team@example.com"},
+            "configuration": {"name": "my-bucket"},
+        }
+        resource = handler.Resource.parse(item)
+        assert resource.Tags == {
+            "Environment": "Production",
+            "Owner": "team@example.com",
+        }
+
+    def test_parse_configuration_item_merges_tag_sources(self):
+        """Test parsing merges tags from both the configuration blob and the top level map."""
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::EC2::Instance",
+            "resourceId": "i-0abcd1234",
+            "ARN": "arn:aws:ec2:eu-west-2:123456789012:instance/i-0abcd1234",
+            "tags": {"Owner": "team@example.com"},
+            "configuration": {"tags": [{"key": "Environment", "value": "Production"}]},
+        }
+        resource = handler.Resource.parse(item)
+        assert resource.Tags == {
+            "Environment": "Production",
+            "Owner": "team@example.com",
+        }
+
+    def test_parse_configuration_item_null_top_level_tags(self):
+        """Test parsing when the top level tags map is null, as sent for deleted resources."""
+        item = {
+            "awsAccountId": "123456789012",
+            "resourceType": "AWS::S3::Bucket",
+            "resourceId": "my-bucket",
+            "ARN": None,
+            "tags": None,
+            "configuration": None,
+        }
+        resource = handler.Resource.parse(item)
+        assert resource.Tags == {}
+
     def test_parse_configuration_item_missing_field(self):
         """Test parsing fails when required field is missing."""
         item = {
@@ -1498,6 +1545,49 @@ class TestLambdaHandler:
         call_args = mock_config_client.put_evaluations.call_args[1]
         evaluation = call_args["Evaluations"][0]
         assert evaluation["ComplianceType"] == handler.COMPLIANCE_TYPE_NOT_APPLICABLE
+
+    @patch.dict(
+        os.environ,
+        {
+            "ACCOUNT_ID": "123456789012",
+            "TABLE_ARN_RULES": "arn:aws:dynamodb:us-east-1:123456789012:table/tagging-compliance",
+        },
+    )
+    @patch("handler.config_client")
+    @patch("handler.table_client")
+    def test_lambda_handler_compliant_resource_top_level_tags(
+        self, mock_table_client, mock_config_client, sample_config_event
+    ):
+        """Test lambda handler with a resource whose tags are only in the top level map."""
+        # S3 buckets carry no tags inside the configuration blob, so AWS Config
+        # reports them in the top level 'tags' map instead.
+        event = sample_config_event.copy()
+        invoking_event = json.loads(event["invokingEvent"])
+        invoking_event["configurationItem"]["resourceType"] = "AWS::S3::Bucket"
+        invoking_event["configurationItem"]["resourceId"] = "my-bucket"
+        invoking_event["configurationItem"]["ARN"] = "arn:aws:s3:::my-bucket"
+        invoking_event["configurationItem"]["tags"] = {"Environment": "Production"}
+        invoking_event["configurationItem"]["configuration"] = {"name": "my-bucket"}
+        event["invokingEvent"] = json.dumps(invoking_event)
+
+        rule_item = {
+            "ResourceTypes": {"S": '["AWS::S3::*"]'},
+            "Tag": {"S": "Environment"},
+            "Enabled": {"BOOL": True},
+            "Required": {"BOOL": True},
+            "RuleId": {"S": "require-environment"},
+            "ValuePattern": {"S": ""},
+            "Values": {"S": '["Production", "Staging", "Development"]'},
+            "AccountIds": {"S": '["*"]'},
+        }
+        mock_table_client.scan.return_value = {"Items": [rule_item]}
+        mock_config_client.put_evaluations.return_value = {}
+
+        handler.lambda_handler(event, None)
+
+        call_args = mock_config_client.put_evaluations.call_args[1]
+        evaluation = call_args["Evaluations"][0]
+        assert evaluation["ComplianceType"] == handler.COMPLIANCE_TYPE_COMPLIANT
 
     @patch.dict(
         os.environ,
