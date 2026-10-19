@@ -137,84 +137,84 @@ Wraps the validation Lambda into an AWS Config Conformance Pack for organization
 
 ## Usage
 
-### Step 1: Deploy Central DynamoDB Table (Management Account)
+### Step 1: Deploy S3 Policy Bucket (Management Account)
 
-If you plan to scope rules using `OrganizationalPaths`, you must set `var.organizations` in the root module. This creates a separate DynamoDB table for account metadata and deploys a Lambda that uses the AWS Organizations API to populate account information (including organizational paths). The compliance evaluator then uses that table to match `OrganizationalPaths` in rules.
+Create the S3 bucket with your YAML tagging policy. If you use organizational
+path or account tag filters, enable the organizations Lambda to maintain the
+account inventory.
 
 ```hcl
 # In your management account (or shared services account)
 module "tagging_compliance_central" {
   source  = "appvia/tagging/aws"
-  version = "0.0.1"
+  version = "2.0.0"
 
-  # Configure the compliance DynamoDB table
-  compliance = {
-    table = {
-      name         = "tagging-compliance-rules"
-      billing_mode = "PAY_PER_REQUEST"
-    }
+  # Your YAML tagging policy
+  policy = file("${path.module}/tagging-policy.yaml")
+
+  # S3 bucket configuration
+  bucket = {
+    name = "org-tagging-compliance"
   }
 
   # Enable organization-wide access
   enable_organizations = true
   organizations_id     = "o-123456789"  # Your AWS Organization ID
 
-  # Enable Organizations metadata table for OrganizationalPaths filtering
+  # Enable organizations inventory for OU/account-tag filtering (optional)
   organizations = {
-    table = {
-      name = "organizational-accounts"
+    lambda = {
+      name = "org-account-inventory"
     }
   }
 
-  # Define compliance rules centrally
-  rules = [
-    {
-      RuleId       = "require-environment-tag"
-      ResourceType = "AWS::EC2::*"
-      Tag          = "Environment"
-      Required     = true
-      Values       = ["production", "staging", "development", "sandbox"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    {
-      RuleId       = "require-owner-email"
-      ResourceType = "AWS::*"
-      Tag          = "Owner"
-      Required     = true
-      ValuePattern = "^[a-zA-Z0-9._%+-]+@company\\.com$"
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    {
-      RuleId       = "require-cost-center-prod"
-      ResourceType = "AWS::*"
-      Tag          = "CostCenter"
-      Required     = true
-      ValuePattern = "^CC-[0-9]{4}$"
-      AccountIds   = ["111222333444"]  # Production account only
-      Enabled      = true
-    },
-    {
-      RuleId              = "require-owner-email-sandbox"
-      ResourceType        = "AWS::*"
-      Tag                 = "Owner"
-      Required            = true
-      ValuePattern        = "^[a-zA-Z0-9._%+-]+@company\\.com$"
-      OrganizationalPaths = ["root/Sandbox"]
-      Enabled             = true
-    }
-  ]
-
   tags = {
-    Environment = "production"
+    Environment = "management"
     ManagedBy   = "terraform"
   }
 }
 
-output "dynamodb_table_arn" {
-  value = module.tagging_compliance_central.dynamodb_arn
+output "policy_bucket_name" {
+  value       = module.tagging_compliance_central.bucket_name
+  description = "Name of the S3 bucket holding the tagging policy"
 }
+```
+
+Example `tagging-policy.yaml`:
+
+```yaml
+version: 1
+rules:
+  - name: require-environment-tag
+    description: All resources must have Environment tag
+    steps:
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [production, staging, development]}
+
+  - name: require-owner-email
+    description: All resources must have Owner email
+    steps:
+      - assert: {tag: Owner, present: true}
+      - assert: {tag: Owner, matches: "^[a-zA-Z0-9._%+-]+@company\\.com$"}
+
+  - name: prod-cost-center
+    description: Production resources require CostCenter
+    steps:
+      - filter: {account_id: ["111222333444"]}
+      - assert: {tag: CostCenter, present: true}
+      - assert: {tag: CostCenter, matches: "^CC-[0-9]{4}$"}
+
+  - name: sandbox-owner-requirement
+    description: Sandbox OU resources require Owner
+    steps:
+      - filter: {organizational_path: root/Sandbox}
+      - assert: {tag: Owner, present: true}
+```
+
+Validate your policy before deploying:
+
+```bash
+python3 modules/validation/assets/policy.py tagging-policy.yaml
 ```
 
 ### Step 2: Deploy Config Rules (Each Account)
@@ -223,14 +223,19 @@ output "dynamodb_table_arn" {
 # In each member account that should enforce compliance
 module "tagging_compliance_evaluator" {
   source  = "appvia/tagging/aws//modules/config"
-  version = "0.0.1"
+  version = "2.0.0"
 
-  # Reference the central DynamoDB table (cross-account)
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/tagging-compliance-rules"
+  # Reference the central S3 policy bucket (cross-account)
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "<policy-sha256>"  # From root module output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "<mappings-sha256>"  # From root module output
+  accounts_key       = "accounts.yaml"
 
   # Lambda configuration
   lambda_name        = "tagging-compliance-evaluator"
-  lambda_description = "Evaluates resource tagging compliance"
   lambda_log_level   = "INFO"
 
   # AWS Config rule configuration
@@ -245,7 +250,6 @@ module "tagging_compliance_evaluator" {
 
   # CloudWatch Logs
   cloudwatch_logs_retention_in_days = 14
-  cloudwatch_logs_kms_key_id        = null  # Optional: KMS key for encryption
 
   tags = {
     Environment = "production"
@@ -254,28 +258,30 @@ module "tagging_compliance_evaluator" {
 }
 ```
 
-### Step 3: Add or Update Rules (Anytime)
+### Step 3: Update Policy (Anytime)
 
-```hcl
-# Update rules in the management account - changes apply to all accounts automatically
-module "tagging_compliance_rules" {
-  source = "appvia/tagging/aws//modules/compliance"
-  version = "0.0.1"
+Edit your `tagging-policy.yaml` and run `terraform apply`. Policy changes
+trigger AWS Config to re-evaluate all resources via the version hash
+parameters.
 
-  dynamodb_table_name = "tagging-compliance-rules"
+```yaml
+# Add a new rule to tagging-policy.yaml
+- name: s3-data-classification
+  description: S3 buckets must declare data classification
+  steps:
+    - filter: {type: aws_s3_bucket}
+    - assert: {tag: DataClassification, present: true}
+    - assert: {tag: DataClassification, in: [Public, Internal, Confidential]}
+```
 
-  rules = [
-    {
-      RuleId       = "new-data-classification-rule"
-      ResourceType = "AWS::S3::Bucket"
-      Tag          = "DataClassification"
-      Required     = true
-      Values       = ["public", "internal", "confidential", "restricted"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    }
-  ]
-}
+Then apply:
+
+```bash
+# Validate the policy first
+python3 modules/validation/assets/policy.py tagging-policy.yaml
+
+# Apply the change
+terraform apply
 ```
 
 ## Complete Multi-Account Example
@@ -285,71 +291,28 @@ Here's a complete example showing deployment across a typical AWS Organization:
 ### Management Account (`management-account/tagging.tf`)
 
 ```hcl
-# Create central DynamoDB table and define organization-wide rules
+# Create S3 bucket with YAML tagging policy
 module "tagging_compliance" {
   source = "appvia/tagging/aws"
 
-  # Configure the compliance DynamoDB table
-  compliance = {
-    table = {
-      name         = "org-tagging-compliance"
-      billing_mode = "PAY_PER_REQUEST"
-    }
+  # The YAML tagging policy
+  policy = file("${path.module}/tagging-policy.yaml")
+
+  # S3 bucket configuration
+  bucket = {
+    name = "org-tagging-compliance"
   }
 
   # Enable organization-wide access
   enable_organizations = true
   organizations_id     = data.aws_organizations_organization.current.id
 
-  rules = [
-    # Global rules for all accounts
-    {
-      RuleId       = "global-environment-tag"
-      ResourceType = "AWS::*"
-      Tag          = "Environment"
-      Required     = true
-      Values       = ["production", "staging", "development", "sandbox"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    {
-      RuleId       = "global-owner-tag"
-      ResourceType = "AWS::*"
-      Tag          = "Owner"
-      Required     = true
-      ValuePattern = "^[a-zA-Z0-9._%+-]+@company\\.com$"
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    {
-      RuleId       = "global-managed-by-tag"
-      ResourceType = "AWS::*"
-      Tag          = "ManagedBy"
-      Required     = true
-      Values       = ["terraform", "cloudformation", "console"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    # Production-specific rules
-    {
-      RuleId       = "prod-cost-center"
-      ResourceType = "AWS::*"
-      Tag          = "CostCenter"
-      Required     = true
-      ValuePattern = "^CC-[0-9]{4}$"
-      AccountIds   = ["111222333444"]  # Production account
-      Enabled      = true
-    },
-    {
-      RuleId       = "prod-compliance"
-      ResourceType = "AWS::*"
-      Tag          = "Compliance"
-      Required     = true
-      Values       = ["sox", "pci", "hipaa", "none"]
-      AccountIds   = ["111222333444"]
-      Enabled      = true
+  # Enable inventory for OU/account-tag filtering
+  organizations = {
+    lambda = {
+      name = "org-account-inventory"
     }
-  ]
+  }
 
   tags = {
     Environment = "management"
@@ -358,10 +321,55 @@ module "tagging_compliance" {
   }
 }
 
-output "compliance_table_arn" {
-  value       = module.tagging_compliance.dynamodb_arn
-  description = "ARN of the central compliance rules table"
+output "policy_bucket_name" {
+  value       = module.tagging_compliance.bucket_name
+  description = "Name of the S3 bucket holding the tagging policy"
 }
+
+output "policy_version" {
+  value       = module.tagging_compliance.policy_version
+  description = "SHA256 of the tagging policy"
+}
+```
+
+Example `tagging-policy.yaml`:
+
+```yaml
+version: 1
+rules:
+  # Global rules for all accounts
+  - name: global-environment-tag
+    description: All resources must have Environment tag
+    steps:
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [production, staging, development]}
+
+  - name: global-owner-tag
+    description: All resources must have Owner email
+    steps:
+      - assert: {tag: Owner, present: true}
+      - assert: {tag: Owner, matches: "^[a-zA-Z0-9._%+-]+@company\\.com$"}
+
+  - name: global-managed-by-tag
+    description: All resources must have ManagedBy tag
+    steps:
+      - assert: {tag: ManagedBy, present: true}
+      - assert: {tag: ManagedBy, in: [terraform, cloudformation, console]}
+
+  # Production-specific rules
+  - name: prod-cost-center
+    description: Production resources require CostCenter
+    steps:
+      - filter: {account_id: ["111222333444"]}
+      - assert: {tag: CostCenter, present: true}
+      - assert: {tag: CostCenter, matches: "^CC-[0-9]{4}$"}
+
+  - name: prod-compliance
+    description: Production resources require Compliance tag
+    steps:
+      - filter: {account_id: ["111222333444"]}
+      - assert: {tag: Compliance, present: true}
+      - assert: {tag: Compliance, in: [sox, pci, hipaa, none]}
 ```
 
 ### Production Account (`production-account/config-rules.tf`)
@@ -371,7 +379,14 @@ output "compliance_table_arn" {
 module "tagging_evaluator" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/org-tagging-compliance"
+  # Reference the central S3 policy bucket
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."  # From management account output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."  # From management account output
+  accounts_key       = "accounts.yaml"
 
   lambda_name      = "tagging-compliance-prod"
   lambda_log_level = "INFO"
@@ -408,7 +423,14 @@ module "tagging_evaluator" {
 module "tagging_evaluator" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/org-tagging-compliance"
+  # Reference the central S3 policy bucket
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."  # From management account output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."  # From management account output
+  accounts_key       = "accounts.yaml"
 
   lambda_name      = "tagging-compliance-dev"
   lambda_log_level = "DEBUG"  # More verbose logging in dev
@@ -531,9 +553,16 @@ Each account deploys its own Config rules via the `config` module:
 module "tagging_config" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/compliance-rules"
-  lambda_name        = "org-tagging-compliance"
-  config_name        = "tagging-compliance"
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."
+  accounts_key       = "accounts.yaml"
+
+  lambda_name = "org-tagging-compliance"
+  config_name = "tagging-compliance"
 
   tags = { Environment = "production" }
 }
@@ -558,11 +587,16 @@ module "tagging_pack" {
   source = "appvia/tagging/aws//modules/pack"
 
   conformance_pack_name    = "org-tagging-compliance"
-  s3_bucket_name           = "org-conformance-packs-${data.aws_caller_identity.current.account_id}"
+  s3_bucket_name           = "org-pack-templates"
   deploy_organization_wide = true
 
-  lambda_function_arn = module.validation.lambda_arn
-  dynamodb_table_arn  = module.tagging_compliance.dynamodb_arn
+  policy_bucket_name = module.tagging_central.bucket_name
+  policy_bucket_arn  = module.tagging_central.bucket_arn
+  policy_key         = module.tagging_central.policy_key
+  policy_version     = module.tagging_central.policy_version
+  mappings_key       = module.tagging_central.mappings_key
+  mappings_version   = module.tagging_central.mappings_version
+  accounts_key       = module.tagging_central.accounts_key
 
   excluded_accounts = ["111111111111"]  # Sandbox accounts
 
@@ -601,9 +635,16 @@ module "tagging_pack" {
 module "tagging_config_prod" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/compliance-rules"
-  lambda_name        = "org-tagging-compliance"
-  config_name        = "tagging-compliance-prod"
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."
+  accounts_key       = "accounts.yaml"
+
+  lambda_name = "org-tagging-compliance"
+  config_name = "tagging-compliance-prod"
 
   # ... other config
 }
@@ -631,12 +672,14 @@ Check CloudWatch Logs for the Lambda function:
 aws logs tail /aws/lambda/tagging-compliance-evaluator --follow
 ```
 
-### DynamoDB Access Issues
+### S3 Access Issues
 
-Verify the organization ID and resource policy:
+Verify the bucket policy allows cross-account access:
 ```bash
-aws dynamodb get-resource-policy --resource-arn <table-arn>
+aws s3api get-bucket-policy --bucket org-tagging-compliance
 ```
+
+Ensure the policy grants `s3:GetObject` to your organization or accounts.
 
 ### Config Rule Not Triggering
 

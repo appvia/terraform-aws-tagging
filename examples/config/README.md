@@ -45,8 +45,14 @@ The config module integrates with the validation module (Lambda function) to per
 module "config" {
   source = "../../modules/config"
 
-  # Reference central DynamoDB table (typically in management account)
-  dynamodb_table_arn = "arn:aws:dynamodb:eu-west-1:123456789012:table/tagging-compliance"
+  # Reference central S3 policy bucket (typically in management account)
+  policy_bucket_name = "tagging-compliance-config"
+  policy_bucket_arn  = "arn:aws:s3:::tagging-compliance-config"
+  policy_key         = "policy.yaml"
+  policy_version     = module.tagging.policy_version
+  mappings_key       = "mappings.yaml"
+  mappings_version   = module.tagging.mappings_version
+  accounts_key       = "accounts.yaml"
   
   # AWS Config rule configuration
   config_name           = "tagging-compliance"
