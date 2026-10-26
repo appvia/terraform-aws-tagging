@@ -867,13 +867,13 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 ## Providers
 
 | Name | Version |
-| ---- | ------- |
+|------|---------|
 | <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0.0 |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-| ---- | ----------- | ---- | ------- | :------: |
+|------|-------------|------|---------|:--------:|
 | <a name="input_policy"></a> [policy](#input\_policy) | The tagging policy as YAML content (version: 1), uploaded to the bucket as policy.yaml. Typically file("tagging-policy.yaml"). | `string` | n/a | yes |
 | <a name="input_bucket"></a> [bucket](#input\_bucket) | Configuration for the S3 bucket holding the tagging policy, the resource type mappings and the account inventory. | <pre>object({<br/>    ## The name of the S3 bucket to provision.<br/>    name = optional(string, "tagging-compliance")<br/>    ## The ARN of an existing KMS key used to encrypt the bucket (aws:kms). When null, AES256 is used. The module never creates a key.<br/>    kms_key_arn = optional(string)<br/>    ## Whether to delete all objects (including versions) when the bucket is destroyed.<br/>    force_destroy = optional(bool, false)<br/>  })</pre> | `{}` | no |
 | <a name="input_enable_organizations"></a> [enable\_organizations](#input\_enable\_organizations) | Enable organization access to the policy bucket. When enabled, allows any account in the organization to read the policy, mappings and inventory. | `bool` | `true` | no |
@@ -885,7 +885,7 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 ## Outputs
 
 | Name | Description |
-| ---- | ----------- |
+|------|-------------|
 | <a name="output_accounts_key"></a> [accounts\_key](#output\_accounts\_key) | The object key of the account inventory in the policy bucket, or null when organizations is not enabled. |
 | <a name="output_bucket_arn"></a> [bucket\_arn](#output\_bucket\_arn) | The ARN of the S3 bucket holding the tagging policy, mappings and inventory. |
 | <a name="output_bucket_name"></a> [bucket\_name](#output\_bucket\_name) | The name of the S3 bucket holding the tagging policy, mappings and inventory. |
