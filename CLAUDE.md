@@ -4,24 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Terraform module for AWS tagging compliance enforcement across AWS Organizations. It uses AWS Config custom rules with Lambda functions to evaluate resource tags against centrally-defined rules stored in DynamoDB.
+This is a Terraform module for AWS tagging compliance enforcement across AWS Organizations. It uses AWS Config custom rules with Lambda functions to evaluate resource tags against a centrally-defined YAML policy stored in S3.
 
 ## Architecture
 
-The framework consists of five main components:
+The framework consists of four main components:
 
-1. **Root Module** - Creates the central DynamoDB table with organization-wide access policies
-2. **Validation Module** (`modules/validation/`) - Lambda function that evaluates tagging compliance
-3. **Config Module** (`modules/config/`) - AWS Config custom rules that invoke the Lambda
-4. **Compliance Module** (`modules/compliance/`) - Manages compliance rules in DynamoDB
-5. **Pack Module** (`modules/pack/`) - Wraps everything into AWS Config Conformance Packs for org-wide deployment
+1. **Root Module** - Creates the S3 bucket holding the tagging policy, resource type mappings, and optional account inventory
+2. **Validation Module** (`modules/validation/`) - Lambda function that evaluates tagging compliance against the YAML policy
+3. **Config Module** (`modules/config/`) - AWS Config custom rules that invoke the validation Lambda
+4. **Pack Module** (`modules/pack/`) - Wraps validation into AWS Config Conformance Packs for org-wide deployment
 
 ### Key Design Patterns
 
-- **Central Rule Repository**: DynamoDB table in management account stores all tagging rules
-- **Organization-Wide Access**: Resource policies allow cross-account read access
+- **YAML Policy Language**: Rich, configuration-driven rules with filter/assert chains, supporting organizational paths, account IDs, and account tags
+- **S3-Based Storage**: Policy, mappings, and account inventory stored in a versioned, encrypted S3 bucket
+- **Organization-Wide Access**: Bucket policies allow cross-account read access via `aws:PrincipalOrgID`
 - **Separation of Concerns**: Validation module (Lambda) is separate from Config module (Config rules)
 - **Two Deployment Patterns**: Per-account Config rules OR organization conformance packs
+- **Automatic Re-evaluation**: Policy and inventory changes trigger Config re-evaluation via version hash parameters
 
 ## Development Commands
 
@@ -69,11 +70,12 @@ make all                     # Run full workflow: init, validate, tests, lint, s
 ## Code Structure
 
 ### Root Module Files
-- `main.tf` - DynamoDB table, resource policy, and compliance rules integration
-- `variables.tf` - Input variables for table configuration and rules
-- `outputs.tf` - Exports table ARN and name
+- `storage.tf` - S3 bucket, bucket policy, and S3 objects (policy, mappings, inventory)
+- `organizations.tf` - Organizations Lambda for account inventory management
+- `variables.tf` - Input variables for bucket configuration, policy, mappings, and organizations
+- `outputs.tf` - Exports bucket ARN/name, object keys, version hashes, and KMS key ARN
 - `data.tf` - Data sources for account ID and organization
-- `locals.tf` - Local values for organization ID resolution
+- `locals.tf` - Local values for organization ID resolution and merged mappings
 
 ### Module Structure
 Each module follows the same pattern:
@@ -87,11 +89,16 @@ Each module follows the same pattern:
 - `provider.tf` - Terraform provider confuiguration
 
 ### Lambda Handler (Python)
-- Location: `modules/validation/assets/handler.py`
-- Runtime: Python 3.12
-- Entry point: `lambda_handler(event, context)`
-- Key classes: `Resource`, `Rule`, `Evaluation` `Evaluations`
-- Tests: `modules/validation/assets/handler_test.py`
+- **Validation Lambda**: `modules/validation/assets/handler.py`
+  - Runtime: Python 3.12
+  - Entry point: `lambda_handler(event, context)`
+  - Dependencies: `policy.py` (parser), `engine.py` (evaluator), `store.py` (S3 caching)
+  - Tests: `modules/validation/assets/handler_test.py`, `policy_test.py`, `engine_test.py`, `store_test.py`
+- **Organizations Lambda**: `modules/organizations/assets/handler.py`
+  - Syncs account inventory with tags to S3 as `accounts.yaml`
+  - Triggers on Organizations events (create, close, move, tag changes) and daily schedule
+  - Re-puts conformance pack with new InventoryVersion when accounts change
+  - Tests: `modules/organizations/assets/handler_test.py`
 
 ### Testing
 - Native Terraform tests in `tests/*.tftest.hcl`
@@ -100,42 +107,63 @@ Each module follows the same pattern:
 
 ## Working with Lambda Functions
 
-The Lambda handler evaluates AWS Config events:
+### Validation Lambda
+The validation Lambda evaluates AWS Config events against the YAML policy:
 
-1. Extracts resource details from AWS Config event
-2. Queries DynamoDB for applicable rules (by ResourceType and AccountId)
-3. Evaluates tags against rules (required/optional, values, regex patterns)
-4. Returns compliance status: COMPLIANT, NON_COMPLIANT, or NOT_APPLICABLE
+1. Loads and caches policy, mappings, and inventory from S3 (with TTL and ETag revalidation)
+2. Parses the YAML policy (`policy.py`) and validates resource tags against rules (`engine.py`)
+3. Filters rules by resource type (via mappings), organizational path, account ID, and account tags
+4. Returns compliance status: COMPLIANT (no errors), NON_COMPLIANT (error violations), or NOT_APPLICABLE (no rules matched)
 
-### Key Lambda Logic
-- Rules are filtered by: resource type pattern match, account ID match, enabled status
-- Tag validation supports: specific values list OR regex pattern (ValuePattern)
-- Optional tags (Required=false) are only validated if present
+### Key Validation Logic
+- **Policy Grammar**: Chains of `filter` (narrows scope) and `assert` (reports violations) steps
+- **Targets**: `tag`, `type` (Terraform or AWS:: names), `address` (plan-time only), `organizational_path`, `account_id`, `account_tag`
+- **Operators**: `present`, `equals`, `in`, `contains`, `starts_with`, `ends_with`, `matches` (regex), case operators, `not`
+- **Severity**: `error` (NON_COMPLIANT) or `warning` (logged, COMPLIANT)
+- **Taggable Types**: Only resource types in `mappings.yaml` are evaluated; unmapped types return NOT_APPLICABLE
+- **Missing Inventory**: Rules using `organizational_path` or `account_tag` are ignored when no inventory is configured or the account is missing
+
+### Organizations Lambda
+Maintains the account inventory in `accounts.yaml`:
+
+1. Lists all accounts via Organizations API and retrieves tags for each
+2. Writes `accounts.yaml` (AccountId, AccountName, OUPath, Status, Tags, LastUpdated) only when changed
+3. Reconciles the conformance pack's InventoryVersion parameter to trigger org-wide re-evaluation
+4. Triggers: EventBridge (CreateAccount, CloseAccount, MoveAccount, TagResource, UntagResource in us-east-1) + daily schedule
 
 ## Module Dependencies
 
-- **config** module depends on **validation** module (internally invoked)
-- **compliance** module writes to DynamoDB table created by root module
-- **pack** module requires **validation** module's Lambda ARN
+- **config** and **pack** modules depend on the root module's S3 bucket outputs
+- **config** and **pack** modules create validation Lambdas (or accept an external Lambda ARN)
+- Root module's **organizations** block creates the inventory Lambda (optional)
 - All modules require AWS provider >= 6.0.0
 
 ## Important Notes
 
-### DynamoDB Schema
-- Hash Key: `ResourceType` (string)
-- Range Key: `RuleId` (string)
-- Required attributes: ResourceType, RuleId, Tag, Enabled, Required
-- Optional attributes: Values (list), ValuePattern (string), AccountIds (list)
+### Policy Validation
+The policy can be validated at two levels:
+1. **Terraform Plan-Time**: The root module's `policy` variable validates basic YAML shape (`version: 1`, `rules` is a list)
+2. **Full Validation**: Run `python3 modules/validation/assets/policy.py <file>` in CI to validate the full grammar before apply
+
+### S3 Bucket
+- **Versioning**: Enabled to track policy/mappings/inventory history
+- **Encryption**: AES256 (default) or `aws:kms` when a `kms_key_arn` is provided
+- **Access**: Public access blocked; bucket policy grants `s3:GetObject` to `aws:PrincipalOrgID` and management account
+- **TLS-Only**: Bucket policy denies requests without `aws:SecureTransport`
+
+### KMS Key Policy (when using customer-managed keys)
+The consumer-supplied KMS key must grant:
+- `kms:Decrypt` to the organization principal (for validation Lambdas in member accounts)
+- `kms:GenerateDataKey` and `kms:Decrypt` to the organizations Lambda (for writing inventory)
 
 ### Cross-Account Access
 The framework supports cross-account Lambda invocation via:
-- Organization condition in DynamoDB resource policy (`aws:PrincipalOrgID`)
-- Lambda permissions with organization principal
-- Config rules in member accounts invoke Lambda in management account
+- Organization condition in S3 bucket policy (`aws:PrincipalOrgID`)
+- Lambda permissions with organization principal (Config rules in member accounts invoke Lambda in management account)
 
 ### Two Deployment Patterns
-1. **Per-Account Config Rules**: Deploy config module in each account separately
-2. **Organization Conformance Pack**: Deploy pack module once in management account (recommended)
+1. **Per-Account Config Rules**: Deploy config module in each account separately (known limitation: inventory changes do not trigger re-evaluation without ScheduledNotification handling)
+2. **Organization Conformance Pack**: Deploy pack module once in management account (recommended; inventory changes trigger org-wide re-evaluation)
 
 ## Testing Strategy
 
@@ -178,5 +206,9 @@ When making changes:
 - tflint (for Terraform linting)
 - trivy (for security scanning)
 - Python 3.x with pytest and black (for Lambda testing/formatting)
+- Lambda packaging (`pip_requirements = true`): the host running `terraform plan`/`apply` needs a
+  Python matching each Lambda runtime on `PATH` (validation `python3.14`, organizations
+  `python3.12` by default) with `pip` and PyPI access; override `lambda_runtime` (config/validation)
+  or `organizations.lambda.runtime` (root) to build with another interpreter
 - AWS CLI (for manual testing)
 - commitlint (for commit message validation)

@@ -1,3 +1,9 @@
+variable "accounts_key" {
+  description = "The object key of the account inventory in the policy bucket. When null, no inventory is read and organizational_path/account_tag rules are ignored."
+  type        = string
+  default     = null
+}
+
 variable "cloudwatch_logs_kms_key_id" {
   description = "The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted."
   type        = string
@@ -14,11 +20,6 @@ variable "cloudwatch_logs_retention_in_days" {
   description = "The number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827."
   type        = number
   default     = 7
-}
-
-variable "compliance_rule_table_arn" {
-  description = "The ARN of the DynamoDB table to store tags for AWS resources."
-  type        = string
 }
 
 variable "config_name" {
@@ -59,6 +60,12 @@ variable "periodic_evaluation_enabled" {
   description = "When true, AWS Config also invokes the rule on a recurring schedule; use maximum_execution_frequency to set how often. Combine with configuration_item_change_enabled for both change-driven and scheduled evaluations."
   type        = bool
   default     = false
+}
+
+variable "kms_key_arn" {
+  description = "The ARN of the KMS key encrypting the policy bucket. When set, the lambda is granted kms:Decrypt on it."
+  type        = string
+  default     = null
 }
 
 variable "lambda_architectures" {
@@ -121,20 +128,46 @@ variable "lambda_timeout" {
   default     = 30
 }
 
-variable "organizations_table_arn" {
-  description = "The ARN of the DynamoDB table to store AWS Organizations account information."
+variable "mappings_key" {
+  description = "The object key of the resource type mappings in the policy bucket."
   type        = string
-  default     = null
+  default     = "mappings.yaml"
+}
+
+variable "mappings_version" {
+  description = "A hash of the mappings content (root module output mappings_version). Changing it forces AWS Config to re-evaluate all resources."
+  type        = string
+}
+
+variable "policy_bucket_arn" {
+  description = "The ARN of the S3 bucket holding the tagging policy, mappings and inventory."
+  type        = string
+}
+
+variable "policy_bucket_name" {
+  description = "The name of the S3 bucket holding the tagging policy, mappings and inventory."
+  type        = string
+}
+
+variable "policy_key" {
+  description = "The object key of the tagging policy in the policy bucket."
+  type        = string
+  default     = "policy.yaml"
+}
+
+variable "policy_version" {
+  description = "A hash of the tagging policy content (root module output policy_version). Changing it forces AWS Config to re-evaluate all resources."
+  type        = string
 }
 
 variable "rules_cache_enabled" {
-  description = "Enable or disable caching of compliance rules in Lambda function memory. When enabled, rules are cached between invocations to reduce DynamoDB read costs and improve performance."
+  description = "Enable or disable caching of compliance rules in Lambda function memory. When enabled, the policy, mappings and inventory are cached between invocations to reduce S3 reads and improve performance."
   type        = bool
   default     = true
 }
 
 variable "rules_cache_ttl_seconds" {
-  description = "Time-to-live (TTL) in seconds for cached compliance rules. After this period, the cache expires and rules are re-fetched from DynamoDB. Default is 300 seconds (5 minutes)."
+  description = "Time-to-live (TTL) in seconds for the cached policy, mappings and inventory. After this period, the cached objects are revalidated against S3. Default is 300 seconds (5 minutes)."
   type        = number
   default     = 300
 

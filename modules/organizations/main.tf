@@ -2,16 +2,47 @@
 ## Craft a custom policy for the lambda function
 data "aws_iam_policy_document" "permissions" {
   statement {
-    sid    = "AllowDynamoDB"
+    sid    = "AllowInventoryReadWrite"
     effect = "Allow"
     actions = [
-      "dynamodb:Get*",
-      "dynamodb:Put*",
-      "dynamodb:Scan*",
+      "s3:GetObject",
+      "s3:PutObject",
     ]
     resources = [
-      var.dynamodb_table_arn
+      format("%s/%s", var.bucket_arn, var.accounts_key),
     ]
+  }
+
+  ## Without s3:ListBucket S3 answers a HeadObject on a missing key with 403 rather than
+  ## 404, so the first run (no accounts.yaml yet) would fail. The HeadObject request
+  ## carries no s3:prefix, so a plain StringEquals would never match it; IfExists lets
+  ## that implicit check through while explicit listings must use the accounts key as
+  ## their prefix. A prefix-less ListObjects can still list key names in the bucket.
+  statement {
+    sid       = "AllowInventoryExistenceCheck"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [var.bucket_arn]
+
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "s3:prefix"
+      values   = [var.accounts_key]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.kms_key_arn != null ? [1] : []
+
+    content {
+      sid    = "AllowInventoryEncryption"
+      effect = "Allow"
+      actions = [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+      ]
+      resources = [var.kms_key_arn]
+    }
   }
 
   statement {
@@ -20,8 +51,108 @@ data "aws_iam_policy_document" "permissions" {
     actions = [
       "organizations:List*",
       "organizations:Describe*",
+      "organizations:ListTagsForResource",
     ]
     resources = ["*"]
+  }
+
+  ## Re-putting the organization conformance pack when the inventory changes. Permissions
+  ## per the AWS Config API reference for PutOrganizationConformancePack
+  ## (https://docs.aws.amazon.com/config/latest/APIReference/API_PutOrganizationConformancePack.html):
+  ## the call enables service access for config-multiaccountsetup.amazonaws.com
+  ## (organizations:EnableAWSServiceAccess), creates the AWSServiceRoleForConfigMultiAccountSetup
+  ## service-linked role when missing (iam:GetRole / iam:CreateServiceLinkedRole), needs
+  ## ListDelegatedAdministrators, reads the organization and its accounts, and the caller must be
+  ## able to read the template object in S3. Registering a delegated administrator is a one-time
+  ## setup step and is deliberately not granted.
+  dynamic "statement" {
+    for_each = var.conformance_pack_name != null ? [1] : []
+
+    content {
+      sid    = "AllowConformancePackRead"
+      effect = "Allow"
+      actions = [
+        "config:DescribeOrganizationConformancePacks",
+        "organizations:DescribeOrganization",
+        "organizations:ListAccounts",
+        "organizations:ListDelegatedAdministrators",
+      ]
+      resources = ["*"]
+    }
+  }
+
+  ## The organization conformance pack ARN carries a random suffix after the name
+  dynamic "statement" {
+    for_each = var.conformance_pack_name != null ? [1] : []
+
+    content {
+      sid     = "AllowConformancePackUpdate"
+      effect  = "Allow"
+      actions = ["config:PutOrganizationConformancePack"]
+      resources = [
+        format("arn:%s:config:*:%s:organization-conformance-pack/%s-*", data.aws_partition.current.partition, data.aws_caller_identity.current.account_id, var.conformance_pack_name),
+      ]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.conformance_pack_name != null ? [1] : []
+
+    content {
+      sid       = "AllowConformancePackServiceAccess"
+      effect    = "Allow"
+      actions   = ["organizations:EnableAWSServiceAccess"]
+      resources = ["*"]
+
+      condition {
+        test     = "StringEquals"
+        variable = "organizations:ServicePrincipal"
+        values   = ["config-multiaccountsetup.amazonaws.com"]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.conformance_pack_name != null ? [1] : []
+
+    content {
+      sid     = "AllowConformancePackServiceLinkedRole"
+      effect  = "Allow"
+      actions = ["iam:CreateServiceLinkedRole"]
+      resources = [
+        format("arn:%s:iam::*:role/aws-service-role/config-multiaccountsetup.amazonaws.com/*", data.aws_partition.current.partition),
+      ]
+
+      condition {
+        test     = "StringEquals"
+        variable = "iam:AWSServiceName"
+        values   = ["config-multiaccountsetup.amazonaws.com"]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.conformance_pack_name != null ? [1] : []
+
+    content {
+      sid     = "AllowConformancePackServiceLinkedRoleRead"
+      effect  = "Allow"
+      actions = ["iam:GetRole"]
+      resources = [
+        format("arn:%s:iam::*:role/aws-service-role/config-multiaccountsetup.amazonaws.com/*", data.aws_partition.current.partition),
+      ]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.conformance_pack_name != null && var.conformance_pack_template_uri != null ? [1] : []
+
+    content {
+      sid       = "AllowConformancePackTemplateRead"
+      effect    = "Allow"
+      actions   = ["s3:GetObject"]
+      resources = [local.conformance_pack_template_arn]
+    }
   }
 }
 
@@ -30,23 +161,30 @@ module "lambda_function" {
   source  = "terraform-aws-modules/lambda/aws"
   version = "8.12.0"
 
-  function_name                = var.lambda_name
-  function_tags                = var.tags
-  description                  = var.lambda_description
-  handler                      = "handler.lambda_handler"
-  hash_extra                   = var.lambda_name
-  memory_size                  = var.lambda_memory_size
-  runtime                      = var.lambda_runtime
-  source_path                  = "${path.module}/assets/handler.py"
+  function_name = var.lambda_name
+  function_tags = var.tags
+  description   = var.lambda_description
+  handler       = "handler.lambda_handler"
+  hash_extra    = var.lambda_name
+  memory_size   = var.lambda_memory_size
+  runtime       = var.lambda_runtime
+  source_path = [
+    {
+      path             = "${path.module}/assets"
+      pip_requirements = true
+      patterns         = ["!.*_test\\.py", "!testdata/.*", "!__pycache__/.*"]
+    }
+  ]
   tags                         = merge(var.tags, { "Name" = var.lambda_name })
   timeout                      = var.lambda_timeout
   trigger_on_package_timestamp = false
 
   ## Environment variables for the Lambda function
-  environment_variables = {
-    DYNAMODB_TABLE_ARN = var.dynamodb_table_arn
-    LOG_LEVEL          = var.lambda_log_level
-  }
+  environment_variables = merge({
+    ACCOUNTS_KEY = var.accounts_key
+    BUCKET_NAME  = var.bucket_name
+    LOG_LEVEL    = var.lambda_log_level
+  }, local.conformance_pack_environment)
 
   ## Lambda Role
   create_role                   = true
@@ -106,7 +244,7 @@ resource "aws_cloudwatch_event_rule" "account_events" {
   count = var.enable_account_event_sync ? 1 : 0
 
   name          = var.account_event_rule_name
-  description   = "Trigger AWS Organizations handler on account creation/closure events for the tagging compliance solution."
+  description   = "Trigger AWS Organizations handler on account create, close, move, tag and untag events for the tagging compliance solution."
   event_pattern = local.accounts_event_pattern
   tags          = var.tags
 }

@@ -1,3 +1,18 @@
+# The version parameters carry content hashes only; changing any of them updates the
+# rule and forces AWS Config to re-evaluate every in-scope resource. PolicyVersion and
+# MappingsVersion are set by Terraform. InventoryVersion is the content-sha256 of the
+# account inventory: the organizations lambda sets it when the inventory changes and
+# Terraform reads the same value from the object metadata, so the two never disagree.
+Parameters:
+  PolicyVersion:
+    Type: String
+    Default: "none"
+  MappingsVersion:
+    Type: String
+    Default: "none"
+  InventoryVersion:
+    Type: String
+    Default: "none"
 Resources:
   TaggingComplianceRule:
     Type: AWS::Config::ConfigRule
@@ -18,4 +33,9 @@ Resources:
             MessageType: ScheduledNotification
             MaximumExecutionFrequency: ${max_execution_frequency}
       InputParameters:
-        TABLE_ARN_RULES: ${compliance_rule_table_arn}
+        PolicyVersion:
+          Ref: PolicyVersion
+        MappingsVersion:
+          Ref: MappingsVersion
+        InventoryVersion:
+          Ref: InventoryVersion

@@ -4,6 +4,22 @@ variable "account_event_rule_name" {
   default     = "organizations-account-inventory-account-events"
 }
 
+variable "accounts_key" {
+  description = "The object key of the account inventory (YAML) written to the bucket."
+  type        = string
+  default     = "accounts.yaml"
+}
+
+variable "bucket_arn" {
+  description = "The ARN of the S3 bucket the account inventory is written to."
+  type        = string
+}
+
+variable "bucket_name" {
+  description = "The name of the S3 bucket the account inventory is written to."
+  type        = string
+}
+
 variable "cloudwatch_logs_kms_key_id" {
   description = "The KMS key ID to encrypt CloudWatch Logs. If not provided, logs will not be encrypted."
   type        = string
@@ -22,15 +38,27 @@ variable "cloudwatch_logs_retention_in_days" {
   default     = 7
 }
 
-variable "dynamodb_table_arn" {
-  description = "The ARN of the DynamoDB table to store AWS Organizations account information."
+variable "conformance_pack_name" {
+  description = "The name of the organization conformance pack to re-put with a new InventoryVersion when the inventory changes, forcing an org-wide re-evaluation. Requires conformance_pack_template_uri. When null, no re-evaluation is triggered."
   type        = string
+  default     = null
+}
+
+variable "conformance_pack_template_uri" {
+  description = "The S3 URI (s3://bucket/key) of the conformance pack template (the pack module's s3_bucket_name and s3_template_key, e.g. built with format(); referencing its s3_template_uri output from the root module creates a dependency cycle). Required with conformance_pack_name because DescribeOrganizationConformancePacks does not return the template location."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.conformance_pack_template_uri == null || can(regex("^s3://[^/]+/.+$", var.conformance_pack_template_uri))
+    error_message = "conformance_pack_template_uri must be an S3 URI of the form s3://bucket/key."
+  }
 }
 
 variable "enable_account_event_sync" {
-  description = "Enable an EventBridge rule to trigger the sync on account creation/closure events."
+  description = "Enable an EventBridge rule to trigger the sync on account create, close, move, tag and untag events. Organizations CloudTrail events are delivered to EventBridge only in us-east-1, so the module must be deployed in us-east-1 for this trigger to fire; elsewhere only the scheduled sync runs."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_scheduled_sync" {
@@ -39,10 +67,16 @@ variable "enable_scheduled_sync" {
   default     = true
 }
 
+variable "kms_key_arn" {
+  description = "The ARN of the KMS key encrypting the bucket. When set, the lambda is granted kms:Decrypt and kms:GenerateDataKey on it."
+  type        = string
+  default     = null
+}
+
 variable "lambda_description" {
   description = "The description of the Lambda function to synchronize AWS Organizations account information."
   type        = string
-  default     = "Synchronizes AWS Organizations account information to DynamoDB."
+  default     = "Synchronizes AWS Organizations account information to S3."
 }
 
 variable "lambda_log_level" {

@@ -4,49 +4,16 @@
 # to build your own root module that invokes this module
 #####################################################################################
 
-## Provision the compliance rules in the DynamoDB table
-module "compliance" {
+## Provision the S3 bucket with the tagging policy
+module "tagging" {
   source = "../../"
 
-  # Configuration for the DynamoDB table to store compliance rules.
-  compliance = {
-    table = {
-      name = "tagging-compliance"
-    }
+  ## The tagging policy as YAML content
+  policy = file("${path.module}/tagging-policy.yaml")
+
+  ## S3 bucket configuration
+  bucket = {
+    name          = "tagging-compliance"
+    force_destroy = true
   }
-
-  ## Collection of compliance rules to be stored in the DynamoDB table.
-  rules = [
-    {
-      RuleId        = "ec2-tagging-rule"
-      ResourceTypes = ["AWS::EC2::*"]
-      Tag           = "Environment"
-      Values        = ["Development"]
-      AccountIds    = ["*"]
-    },
-    {
-      RuleId        = "s3-tagging-rule"
-      ResourceTypes = ["AWS::S3::*"]
-      Tag           = "Environment"
-      AccountIds    = ["*"]
-    }
-  ]
 }
-
-## Provision the AWS Config rule to evaluate compliance of AWS
-## resources with the rules stored in the DynamoDB table
-module "config" {
-  source = "../../modules/config"
-
-  ## The name of the DynamoDB table to store tags for AWS resources.
-  compliance_rule_table_arn = module.compliance.compliance_rule_table_arn
-  ## The name of the AWS Config rule to create
-  config_name = "tagging-compliance"
-  ## The resource types to evaluate for compliance
-  config_resource_types = ["AWS::S3::Bucket"]
-
-  depends_on = [
-    module.compliance,
-  ]
-}
-

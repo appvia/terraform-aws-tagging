@@ -2,18 +2,18 @@
 
 ## Description
 
-This example demonstrates the simplest possible deployment of the tagging compliance framework. Here we are deploy the compliance rules and account metadata table into the account
+This example demonstrates the simplest deployment of the tagging compliance
+framework. It creates an S3 bucket with a YAML tagging policy that defines
+organization-wide tagging rules.
 
 ## What This Example Creates
 
-- **DynamoDB Table (Compliance)**: A table named `tagging-compliance` with:
-  - `PAY_PER_REQUEST` billing mode (no capacity planning required)
-  - `ResourceType` and `RuleId` as composite key
-  - Organization-wide read access policy (when organizations enabled)
-  - Encryption at rest using AWS-managed keys
-
-- **AWS Config Rule**: Evaluates AWS resources against tagging rules
-- **Lambda Function**: Validates resource tags against compliance rules stored in DynamoDB
+- **S3 Bucket (Policy Repository)**: A bucket named `tagging-compliance` with:
+  - YAML tagging policy defining compliance rules
+  - Resource type mappings (Terraform to AWS Config types)
+  - Versioning enabled
+  - Encryption at rest (AES256)
+  - Organization-wide read access (when enable_organizations is true)
 
 ## Usage
 
@@ -32,53 +32,48 @@ terraform apply
 
 - Terraform >= 1.0
 - AWS CLI configured with appropriate credentials
-- Permissions to create DynamoDB tables and resource policies
+- Permissions to create S3 buckets and bucket policies
 
 ## When to Use This Example
 
 Use this basic example when:
-- You're just getting started with the tagging compliance framework
-- You want to set up the central rules table before configuring Lambda functions and Config rules
-- You need a standalone DynamoDB table for storing compliance rules
-- You're testing the module in a development environment
+- You want to centrally define tagging rules in a YAML policy
+- You need an S3 bucket to store the policy for org-wide enforcement
+- You're setting up the foundation for tagging compliance
 
 ## Next Steps
 
 After deploying this example:
 
-1. **Add Compliance Rules**: Use the `modules/compliance` module to populate the table with tagging rules
-2. **Deploy Lambda Evaluator**: Use the `modules/validation` module to create the Lambda function that evaluates resources
-3. **Create Config Rules**: Use the `modules/config` module to set up AWS Config rules in each account
-4. **Or Use Conformance Packs**: Use the `modules/pack` module for organization-wide deployment
-
-See the `compliance` example for a more complete setup with rules.
+1. **Deploy Config Rules**: Use the `modules/config` module in each account
+2. **Or Use Conformance Packs**: Use the `modules/pack` module for org-wide
+3. **Update Policy**: Edit `tagging-policy.yaml` and run `terraform apply`
 
 ## Customization
 
 To customize this example:
 
 ```hcl
-module "compliance" {
+module "tagging" {
   source = "../../"
 
-  # Configure the compliance DynamoDB table
-  compliance = {
-    table = {
-      name         = "my-custom-table-name"
-      billing_mode = "PROVISIONED"  # If you prefer provisioned capacity
-      read_capacity  = 5
-      write_capacity = 5
-    }
+  # Your YAML policy file
+  policy = file("${path.module}/tagging-policy.yaml")
+
+  # S3 bucket configuration
+  bucket = {
+    name          = "my-tagging-compliance"
+    kms_key_arn   = aws_kms_key.policy.arn  # Optional: customer key
+    force_destroy = true
   }
 
-  # Enable organizations support
+  # Enable organization access
   enable_organizations = true
-  organizations_id     = "o-abc123def"  # Your AWS Organization ID
+  organizations_id     = "o-123456789"
 
   tags = {
-    Environment = "production"
+    Environment = "management"
     ManagedBy   = "terraform"
-    Purpose     = "tagging-compliance"
   }
 }
 ```
@@ -91,7 +86,7 @@ To destroy all resources created by this example:
 terraform destroy
 ```
 
-**Warning**: This will delete the DynamoDB table and all compliance rules stored in it.
+**Warning**: This will delete the S3 bucket and all policy versions.
 
 <!-- BEGIN_TF_DOCS -->
 ## Providers

@@ -16,15 +16,12 @@ The framework supports two deployment patterns:
 │                    Management Account                            │
 │                                                                   │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Central DynamoDB Table                                   │  │
-│  │  (Compliance Rules Repository)                            │  │
+│  │  S3 Bucket (Policy Repository)                           │  │
+│  │  • policy.yaml (YAML tagging rules)                      │  │
+│  │  • mappings.yaml (Terraform → Config types)              │  │
+│  │  • accounts.yaml (inventory, optional)                   │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
 │                      │ Cross-account Read Access                │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Lambda Function                                          │  │
-│  │  (Evaluation Engine)                                      │  │
-│  │  Allows org-wide invocation                              │  │
-│  └───────────────────┬──────────────────────────────────────┘  │
 └──────────────────────┼───────────────────────────────────────────┘
                        │
        ┌───────────────┼───────────────┐
@@ -36,10 +33,11 @@ The framework supports two deployment patterns:
 │  AWS Config │ │  AWS Config │ │  AWS Config │
 │     Rule    │ │     Rule    │ │     Rule    │
 │      ↓      │ │      ↓      │ │      ↓      │
-│  Invokes    │ │  Invokes    │ │  Invokes    │
-│  Central    │ │  Central    │ │  Central    │
 │   Lambda    │ │   Lambda    │ │   Lambda    │
-│ (cross-acc) │ │ (cross-acc) │ │ (cross-acc) │
+│  (reads S3) │ │  (reads S3) │ │  (reads S3) │
+│      ↓      │ │      ↓      │ │      ↓      │
+│  Evaluates  │ │  Evaluates  │ │  Evaluates  │
+│   Policy    │ │   Policy    │ │   Policy    │
 └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
@@ -49,26 +47,28 @@ The framework supports two deployment patterns:
 │                    Management Account                            │
 │                                                                   │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Central DynamoDB Table                                   │  │
-│  │  (Compliance Rules Repository)                            │  │
+│  │  S3 Bucket (Policy Repository)                           │  │
+│  │  • policy.yaml (YAML tagging rules)                      │  │
+│  │  • mappings.yaml (Terraform → Config types)              │  │
+│  │  • accounts.yaml (inventory with tags)                   │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
 │                      │ Cross-account Read Access                │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Lambda Function                                          │  │
-│  │  (Evaluation Engine)                                      │  │
-│  │  Allows org-wide invocation                              │  │
-│  └───────────────────┬──────────────────────────────────────┘  │
-│                      │                                           │
+│  │  Organizations Lambda                                     │  │
+│  │  • Syncs account inventory to S3                         │  │
+│  │  • Triggers on account/OU/tag changes                    │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                   │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  S3 Bucket                                                │  │
+│  │  Pack S3 Bucket                                           │  │
 │  │  • conformance-pack.yaml template                        │  │
 │  │  • Versioning enabled                                    │  │
-│  │  • Encrypted with KMS                                    │  │
+│  │  • Encrypted                                             │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
 │                      │                                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  CloudFormation StackSet                                  │  │
-│  │  Deploys conformance pack to all accounts                │  │
+│  │  Organization Conformance Pack                            │  │
+│  │  Deploys Config rules to all accounts                    │  │
 │  └───────────────────┬──────────────────────────────────────┘  │
 └──────────────────────┼───────────────────────────────────────────┘
                        │
@@ -80,21 +80,23 @@ The framework supports two deployment patterns:
 │             │ │             │ │             │
 │ Config Rule │ │ Config Rule │ │ Config Rule │
 │      ↓      │ │      ↓      │ │      ↓      │
-│  Invokes    │ │  Invokes    │ │  Invokes    │
-│  Central    │ │  Central    │ │  Central    │
 │   Lambda    │ │   Lambda    │ │   Lambda    │
-│ (via ConPack)│ │ (via ConPack)│ │ (via ConPack)│
+│  (reads S3) │ │  (reads S3) │ │  (reads S3) │
+│      ↓      │ │      ↓      │ │      ↓      │
+│  Evaluates  │ │  Evaluates  │ │  Evaluates  │
+│   Policy    │ │   Policy    │ │   Policy    │
 └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
 ### How It Works
 
-1. **Central Rule Management**: Tagging compliance rules are defined once in a central DynamoDB table (typically in the management or shared services account)
-2. **Organization-Wide Access**: The DynamoDB table has a resource policy allowing read access from all accounts in the AWS Organization
-3. **Per-Account Enforcement**: Each account deploys an AWS Config custom rule with a Lambda function
+1. **YAML Policy Definition**: Tagging compliance rules are defined once in a YAML policy file stored in S3 (typically in the management or shared services account)
+2. **Organization-Wide Access**: The S3 bucket has a policy allowing read access from all accounts in the AWS Organization
+3. **Per-Account Enforcement**: Each account deploys an AWS Config custom rule with a Lambda function (via per-account rules or organization conformance pack)
 4. **Real-Time Validation**: When resources are created or modified, AWS Config invokes the Lambda function
-5. **Compliance Evaluation**: The Lambda reads rules from the central table and validates the resource's tags
+5. **Compliance Evaluation**: The Lambda loads the policy from S3 (with caching and ETag revalidation) and evaluates the resource's tags against the rules
 6. **Reporting**: Compliance status is reported back to AWS Config, providing visibility in the AWS Console and enabling automated remediation
+7. **Automatic Re-evaluation**: Policy changes trigger Config to re-evaluate all resources via version hash parameters; inventory changes (account moves, tag updates) trigger re-evaluation via the organizations Lambda
 
 ### Key Features
 
@@ -111,113 +113,118 @@ The framework supports two deployment patterns:
 
 ## Modules
 
-This framework consists of five modular components:
+This framework consists of four modular components:
 
 ### 1. Root Module (This Module)
-Creates the central DynamoDB table with organization-wide access policies. Deploy this in your management or shared services account.
+Provisions the S3 bucket with the tagging policy, resource type mappings, and optional account inventory. Deploy this in your management or shared services account.
 
 **[Documentation](./README.md)**
 
 ### 2. Validation Module
-Manages the Lambda function for evaluating tagging compliance. Handles IAM roles, permissions, and CloudWatch Logs integration. Can be shared across multiple Config rules and accounts.
+Contains the Lambda function that evaluates resource compliance against the YAML policy. Includes the policy parser, evaluation engine, and S3 caching layer. Automatically used by Config and Pack modules.
 
 **[📖 Validation Module Documentation](./modules/validation/README.md)**
 
 ### 3. Config Module
-Deploys AWS Config custom rules in individual accounts. References the Lambda function from validation module to evaluate resource compliance. Can invoke Lambda in the same account or cross-account (from management account).
+Deploys AWS Config custom rules in individual accounts with a validation Lambda. Reads the policy, mappings, and inventory from the S3 bucket created by the root module.
 
 **[📖 Config Module Documentation](./modules/config/README.md)**
 
-### 4. Compliance Module
-Stores tagging compliance rules in the central DynamoDB table. Use this to define your organization's tagging standards that Lambda evaluates.
-
-**[📖 Compliance Module Documentation](./modules/compliance/README.md)**
-
-### 5. Pack Module
-Wraps the Lambda evaluator into an AWS Config Conformance Pack for organization-wide or account-level distribution. Handles S3 storage, versioning, and deployment via CloudFormation StackSets.
+### 4. Pack Module
+Wraps the validation Lambda into an AWS Config Conformance Pack for organization-wide distribution. Handles S3 template storage, versioning, and deployment via Organizations. Automatically re-evaluates on policy and inventory changes.
 
 **[📖 Pack Module Documentation](./modules/pack/README.md)**
 
+## Prerequisites
+
+- Terraform >= 1.3.0 and the AWS provider >= 6.0.0
+- **Lambda build host**: the validation and organizations Lambdas are packaged with their
+  `requirements.txt` (`pip_requirements = true`), so the machine running `terraform plan`/`apply`
+  needs, on its `PATH`, a Python interpreter matching each Lambda runtime (`python3.14` for the
+  validation Lambda, `python3.12` for the organizations Lambda by default) with `pip`, and network
+  access to PyPI. To build with a different interpreter, override the runtime: `lambda_runtime` on
+  the config module (or validation module) and `organizations.lambda.runtime` on the root module.
+
 ## Usage
 
-### Step 1: Deploy Central DynamoDB Table (Management Account)
+### Step 1: Deploy S3 Policy Bucket (Management Account)
 
-If you plan to scope rules using `OrganizationalPaths`, you must set `var.organizations` in the root module. This creates a separate DynamoDB table for account metadata and deploys a Lambda that uses the AWS Organizations API to populate account information (including organizational paths). The compliance evaluator then uses that table to match `OrganizationalPaths` in rules.
+Create the S3 bucket with your YAML tagging policy. If you use organizational
+path or account tag filters, enable the organizations Lambda to maintain the
+account inventory.
 
 ```hcl
 # In your management account (or shared services account)
 module "tagging_compliance_central" {
   source  = "appvia/tagging/aws"
-  version = "0.0.1"
+  version = "2.0.0"
 
-  # Configure the compliance DynamoDB table
-  compliance = {
-    table = {
-      name         = "tagging-compliance-rules"
-      billing_mode = "PAY_PER_REQUEST"
-    }
+  # Your YAML tagging policy
+  policy = file("${path.module}/tagging-policy.yaml")
+
+  # S3 bucket configuration
+  bucket = {
+    name = "org-tagging-compliance"
   }
 
   # Enable organization-wide access
   enable_organizations = true
   organizations_id     = "o-123456789"  # Your AWS Organization ID
 
-  # Enable Organizations metadata table for OrganizationalPaths filtering
+  # Enable organizations inventory for OU/account-tag filtering (optional)
   organizations = {
-    table = {
-      name = "organizational-accounts"
+    lambda = {
+      name = "org-account-inventory"
     }
   }
 
-  # Define compliance rules centrally
-  rules = [
-    {
-      RuleId       = "require-environment-tag"
-      ResourceType = "AWS::EC2::*"
-      Tag          = "Environment"
-      Required     = true
-      Values       = ["production", "staging", "development", "sandbox"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    {
-      RuleId       = "require-owner-email"
-      ResourceType = "AWS::*"
-      Tag          = "Owner"
-      Required     = true
-      ValuePattern = "^[a-zA-Z0-9._%+-]+@company\\.com$"
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    {
-      RuleId       = "require-cost-center-prod"
-      ResourceType = "AWS::*"
-      Tag          = "CostCenter"
-      Required     = true
-      ValuePattern = "^CC-[0-9]{4}$"
-      AccountIds   = ["111222333444"]  # Production account only
-      Enabled      = true
-    },
-    {
-      RuleId              = "require-owner-email-sandbox"
-      ResourceType        = "AWS::*"
-      Tag                 = "Owner"
-      Required            = true
-      ValuePattern        = "^[a-zA-Z0-9._%+-]+@company\\.com$"
-      OrganizationalPaths = ["root/Sandbox"]
-      Enabled             = true
-    }
-  ]
-
   tags = {
-    Environment = "production"
+    Environment = "management"
     ManagedBy   = "terraform"
   }
 }
 
-output "dynamodb_table_arn" {
-  value = module.tagging_compliance_central.dynamodb_arn
+output "policy_bucket_name" {
+  value       = module.tagging_compliance_central.bucket_name
+  description = "Name of the S3 bucket holding the tagging policy"
 }
+```
+
+Example `tagging-policy.yaml`:
+
+```yaml
+version: 1
+rules:
+  - name: require-environment-tag
+    description: All resources must have Environment tag
+    steps:
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [production, staging, development]}
+
+  - name: require-owner-email
+    description: All resources must have Owner email
+    steps:
+      - assert: {tag: Owner, present: true}
+      - assert: {tag: Owner, matches: "^[a-zA-Z0-9._%+-]+@company\\.com$"}
+
+  - name: prod-cost-center
+    description: Production resources require CostCenter
+    steps:
+      - filter: {account_id: ["111222333444"]}
+      - assert: {tag: CostCenter, present: true}
+      - assert: {tag: CostCenter, matches: "^CC-[0-9]{4}$"}
+
+  - name: sandbox-owner-requirement
+    description: Sandbox OU resources require Owner
+    steps:
+      - filter: {organizational_path: root/Sandbox}
+      - assert: {tag: Owner, present: true}
+```
+
+Validate your policy before deploying:
+
+```bash
+python3 modules/validation/assets/policy.py tagging-policy.yaml
 ```
 
 ### Step 2: Deploy Config Rules (Each Account)
@@ -226,14 +233,19 @@ output "dynamodb_table_arn" {
 # In each member account that should enforce compliance
 module "tagging_compliance_evaluator" {
   source  = "appvia/tagging/aws//modules/config"
-  version = "0.0.1"
+  version = "2.0.0"
 
-  # Reference the central DynamoDB table (cross-account)
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/tagging-compliance-rules"
+  # Reference the central S3 policy bucket (cross-account)
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "<policy-sha256>"  # From root module output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "<mappings-sha256>"  # From root module output
+  accounts_key       = "accounts.yaml"
 
   # Lambda configuration
   lambda_name        = "tagging-compliance-evaluator"
-  lambda_description = "Evaluates resource tagging compliance"
   lambda_log_level   = "INFO"
 
   # AWS Config rule configuration
@@ -248,7 +260,6 @@ module "tagging_compliance_evaluator" {
 
   # CloudWatch Logs
   cloudwatch_logs_retention_in_days = 14
-  cloudwatch_logs_kms_key_id        = null  # Optional: KMS key for encryption
 
   tags = {
     Environment = "production"
@@ -257,28 +268,30 @@ module "tagging_compliance_evaluator" {
 }
 ```
 
-### Step 3: Add or Update Rules (Anytime)
+### Step 3: Update Policy (Anytime)
 
-```hcl
-# Update rules in the management account - changes apply to all accounts automatically
-module "tagging_compliance_rules" {
-  source = "appvia/tagging/aws//modules/compliance"
-  version = "0.0.1"
+Edit your `tagging-policy.yaml` and run `terraform apply`. Policy changes
+trigger AWS Config to re-evaluate all resources via the version hash
+parameters.
 
-  dynamodb_table_name = "tagging-compliance-rules"
+```yaml
+# Add a new rule to tagging-policy.yaml
+- name: s3-data-classification
+  description: S3 buckets must declare data classification
+  steps:
+    - filter: {type: aws_s3_bucket}
+    - assert: {tag: DataClassification, present: true}
+    - assert: {tag: DataClassification, in: [Public, Internal, Confidential]}
+```
 
-  rules = [
-    {
-      RuleId       = "new-data-classification-rule"
-      ResourceType = "AWS::S3::Bucket"
-      Tag          = "DataClassification"
-      Required     = true
-      Values       = ["public", "internal", "confidential", "restricted"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    }
-  ]
-}
+Then apply:
+
+```bash
+# Validate the policy first
+python3 modules/validation/assets/policy.py tagging-policy.yaml
+
+# Apply the change
+terraform apply
 ```
 
 ## Complete Multi-Account Example
@@ -288,71 +301,28 @@ Here's a complete example showing deployment across a typical AWS Organization:
 ### Management Account (`management-account/tagging.tf`)
 
 ```hcl
-# Create central DynamoDB table and define organization-wide rules
+# Create S3 bucket with YAML tagging policy
 module "tagging_compliance" {
   source = "appvia/tagging/aws"
 
-  # Configure the compliance DynamoDB table
-  compliance = {
-    table = {
-      name         = "org-tagging-compliance"
-      billing_mode = "PAY_PER_REQUEST"
-    }
+  # The YAML tagging policy
+  policy = file("${path.module}/tagging-policy.yaml")
+
+  # S3 bucket configuration
+  bucket = {
+    name = "org-tagging-compliance"
   }
 
   # Enable organization-wide access
   enable_organizations = true
   organizations_id     = data.aws_organizations_organization.current.id
 
-  rules = [
-    # Global rules for all accounts
-    {
-      RuleId       = "global-environment-tag"
-      ResourceType = "AWS::*"
-      Tag          = "Environment"
-      Required     = true
-      Values       = ["production", "staging", "development", "sandbox"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    {
-      RuleId       = "global-owner-tag"
-      ResourceType = "AWS::*"
-      Tag          = "Owner"
-      Required     = true
-      ValuePattern = "^[a-zA-Z0-9._%+-]+@company\\.com$"
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    {
-      RuleId       = "global-managed-by-tag"
-      ResourceType = "AWS::*"
-      Tag          = "ManagedBy"
-      Required     = true
-      Values       = ["terraform", "cloudformation", "console"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    },
-    # Production-specific rules
-    {
-      RuleId       = "prod-cost-center"
-      ResourceType = "AWS::*"
-      Tag          = "CostCenter"
-      Required     = true
-      ValuePattern = "^CC-[0-9]{4}$"
-      AccountIds   = ["111222333444"]  # Production account
-      Enabled      = true
-    },
-    {
-      RuleId       = "prod-compliance"
-      ResourceType = "AWS::*"
-      Tag          = "Compliance"
-      Required     = true
-      Values       = ["sox", "pci", "hipaa", "none"]
-      AccountIds   = ["111222333444"]
-      Enabled      = true
+  # Enable inventory for OU/account-tag filtering
+  organizations = {
+    lambda = {
+      name = "org-account-inventory"
     }
-  ]
+  }
 
   tags = {
     Environment = "management"
@@ -361,10 +331,55 @@ module "tagging_compliance" {
   }
 }
 
-output "compliance_table_arn" {
-  value       = module.tagging_compliance.dynamodb_arn
-  description = "ARN of the central compliance rules table"
+output "policy_bucket_name" {
+  value       = module.tagging_compliance.bucket_name
+  description = "Name of the S3 bucket holding the tagging policy"
 }
+
+output "policy_version" {
+  value       = module.tagging_compliance.policy_version
+  description = "SHA256 of the tagging policy"
+}
+```
+
+Example `tagging-policy.yaml`:
+
+```yaml
+version: 1
+rules:
+  # Global rules for all accounts
+  - name: global-environment-tag
+    description: All resources must have Environment tag
+    steps:
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [production, staging, development]}
+
+  - name: global-owner-tag
+    description: All resources must have Owner email
+    steps:
+      - assert: {tag: Owner, present: true}
+      - assert: {tag: Owner, matches: "^[a-zA-Z0-9._%+-]+@company\\.com$"}
+
+  - name: global-managed-by-tag
+    description: All resources must have ManagedBy tag
+    steps:
+      - assert: {tag: ManagedBy, present: true}
+      - assert: {tag: ManagedBy, in: [terraform, cloudformation, console]}
+
+  # Production-specific rules
+  - name: prod-cost-center
+    description: Production resources require CostCenter
+    steps:
+      - filter: {account_id: ["111222333444"]}
+      - assert: {tag: CostCenter, present: true}
+      - assert: {tag: CostCenter, matches: "^CC-[0-9]{4}$"}
+
+  - name: prod-compliance
+    description: Production resources require Compliance tag
+    steps:
+      - filter: {account_id: ["111222333444"]}
+      - assert: {tag: Compliance, present: true}
+      - assert: {tag: Compliance, in: [sox, pci, hipaa, none]}
 ```
 
 ### Production Account (`production-account/config-rules.tf`)
@@ -374,7 +389,14 @@ output "compliance_table_arn" {
 module "tagging_evaluator" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/org-tagging-compliance"
+  # Reference the central S3 policy bucket
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."  # From management account output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."  # From management account output
+  accounts_key       = "accounts.yaml"
 
   lambda_name      = "tagging-compliance-prod"
   lambda_log_level = "INFO"
@@ -411,7 +433,14 @@ module "tagging_evaluator" {
 module "tagging_evaluator" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/org-tagging-compliance"
+  # Reference the central S3 policy bucket
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."  # From management account output
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."  # From management account output
+  accounts_key       = "accounts.yaml"
 
   lambda_name      = "tagging-compliance-dev"
   lambda_log_level = "DEBUG"  # More verbose logging in dev
@@ -430,61 +459,65 @@ module "tagging_evaluator" {
 
 ## Rule Examples
 
+Each example is a complete policy file; check one with
+`python3 modules/validation/assets/policy.py tagging-policy.yaml`. Combine rules under a single
+`rules:` list in your own policy.
+
 ### Basic Required Tags
 
-```hcl
-{
-  RuleId       = "require-environment"
-  ResourceType = "AWS::EC2::Instance"
-  Tag          = "Environment"
-  Required     = true
-  Values       = ["production", "staging", "development"]
-  AccountIds   = ["*"]
-  Enabled      = true
-}
+```yaml
+version: 1
+rules:
+  - name: require-environment
+    description: EC2 instances must carry a valid Environment tag
+    steps:
+      - filter: {type: aws_instance}
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [production, staging, development]}
 ```
 
 ### Email Pattern Validation
 
-```hcl
-{
-  RuleId       = "validate-owner-email"
-  ResourceType = "AWS::*"
-  Tag          = "Owner"
-  Required     = true
-  ValuePattern = "^[a-zA-Z0-9._%+-]+@(company\\.com|partner\\.com)$"
-  Values       = []
-  AccountIds   = ["*"]
-  Enabled      = true
-}
+```yaml
+version: 1
+rules:
+  - name: validate-owner-email
+    description: Every resource must have an Owner tag holding a company email address
+    steps:
+      - assert: {tag: Owner, present: true}
+      - assert: {tag: Owner, matches: '^[a-zA-Z0-9._%+-]+@(company\.com|partner\.com)$'}
 ```
 
 ### Account-Specific Rules
 
-```hcl
-{
-  RuleId       = "prod-cost-tracking"
-  ResourceType = "AWS::*"
-  Tag          = "CostCenter"
-  Required     = true
-  ValuePattern = "^CC-[0-9]{4}$"
-  AccountIds   = ["111222333444", "555666777888"]  # Prod accounts only
-  Enabled      = true
-}
+```yaml
+version: 1
+rules:
+  - name: prod-cost-tracking
+    description: Production accounts must tag resources with a cost centre
+    steps:
+      - filter: {account_id: ["111222333444", "555666777888"]}
+      - assert: {tag: CostCenter, matches: '^CC-[0-9]{4}$'}
+  - name: production-ou-owner
+    description: Accounts under the Production OU (needs the account inventory)
+    steps:
+      - filter: {organizational_path: root/Production}
+      - assert: {tag: Owner, present: true}
 ```
 
 ### Optional Tags
 
-```hcl
-{
-  RuleId       = "optional-project"
-  ResourceType = "AWS::Lambda::Function"
-  Tag          = "Project"
-  Required     = false  # Only validate if present
-  Values       = ["web-app", "api", "data-pipeline"]
-  AccountIds   = ["*"]
-  Enabled      = true
-}
+A filter on the tag being present makes the rule apply only to resources that carry it:
+
+```yaml
+version: 1
+rules:
+  - name: optional-project
+    description: When set, the Project tag must be a known project
+    steps:
+      - filter: {type: aws_lambda_function}
+      - filter: {tag: Project, present: true}
+      - assert: {tag: Project, in: [web-app, api, data-pipeline]}
 ```
 
 ## Monitoring and Compliance
@@ -534,9 +567,16 @@ Each account deploys its own Config rules via the `config` module:
 module "tagging_config" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/compliance-rules"
-  lambda_name        = "org-tagging-compliance"
-  config_name        = "tagging-compliance"
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."
+  accounts_key       = "accounts.yaml"
+
+  lambda_name = "org-tagging-compliance"
+  config_name = "tagging-compliance"
 
   tags = { Environment = "production" }
 }
@@ -561,11 +601,16 @@ module "tagging_pack" {
   source = "appvia/tagging/aws//modules/pack"
 
   conformance_pack_name    = "org-tagging-compliance"
-  s3_bucket_name           = "org-conformance-packs-${data.aws_caller_identity.current.account_id}"
+  s3_bucket_name           = "org-pack-templates"
   deploy_organization_wide = true
 
-  lambda_function_arn = module.validation.lambda_arn
-  dynamodb_table_arn  = module.tagging_compliance.dynamodb_arn
+  policy_bucket_name = module.tagging_central.bucket_name
+  policy_bucket_arn  = module.tagging_central.bucket_arn
+  policy_key         = module.tagging_central.policy_key
+  policy_version     = module.tagging_central.policy_version
+  mappings_key       = module.tagging_central.mappings_key
+  mappings_version   = module.tagging_central.mappings_version
+  accounts_key       = module.tagging_central.accounts_key
 
   excluded_accounts = ["111111111111"]  # Sandbox accounts
 
@@ -604,9 +649,16 @@ module "tagging_pack" {
 module "tagging_config_prod" {
   source = "appvia/tagging/aws//modules/config"
 
-  dynamodb_table_arn = "arn:aws:dynamodb:us-east-1:999999999999:table/compliance-rules"
-  lambda_name        = "org-tagging-compliance"
-  config_name        = "tagging-compliance-prod"
+  policy_bucket_name = "org-tagging-compliance"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
+  policy_key         = "policy.yaml"
+  policy_version     = "abc123..."
+  mappings_key       = "mappings.yaml"
+  mappings_version   = "def456..."
+  accounts_key       = "accounts.yaml"
+
+  lambda_name = "org-tagging-compliance"
+  config_name = "tagging-compliance-prod"
 
   # ... other config
 }
@@ -614,10 +666,10 @@ module "tagging_config_prod" {
 
 ## Best Practices
 
-1. **Start with Observability**: Use `Required = false` initially to understand current state
+1. **Start with Observability**: Use `severity: warning` on new rules initially; violations are logged but resources stay COMPLIANT
 2. **Test in Non-Production**: Validate rules in dev/test accounts before production
-3. **Use Descriptive RuleIds**: Make rules easy to identify (e.g., `"prod-require-cost-center"`)
-4. **Document Patterns**: Add comments explaining complex regex patterns
+3. **Use Descriptive Rule Names**: Make rules easy to identify (e.g., `name: prod-require-cost-center`) and fill in `description`
+4. **Document Patterns**: Add YAML comments explaining complex `matches` regular expressions
 5. **Version Control**: Store Terraform code in Git for audit trail
 6. **Gradual Enablement**: Enable rules incrementally to avoid overwhelming teams
 7. **Monitor Compliance**: Set up dashboards and alerts for compliance metrics
@@ -634,12 +686,14 @@ Check CloudWatch Logs for the Lambda function:
 aws logs tail /aws/lambda/tagging-compliance-evaluator --follow
 ```
 
-### DynamoDB Access Issues
+### S3 Access Issues
 
-Verify the organization ID and resource policy:
+Verify the bucket policy allows cross-account access:
 ```bash
-aws dynamodb get-resource-policy --resource-arn <table-arn>
+aws s3api get-bucket-policy --bucket org-tagging-compliance
 ```
+
+Ensure the policy grants `s3:GetObject` to your organization or accounts.
 
 ### Config Rule Not Triggering
 
@@ -656,79 +710,150 @@ Verify the resource type is in the Config rule scope:
 aws configservice describe-config-rules --config-rule-names tagging-compliance
 ```
 
-## DynamoDB Capacity Planning
+## Upgrading from DynamoDB
 
-### Understanding RCU and WCU
+Version 2.0 replaced DynamoDB-based rule storage with a YAML tagging policy stored in S3. This is a breaking change.
 
-DynamoDB uses two billing metrics to measure capacity:
+### Migration Steps
 
-- **Read Capacity Units (RCU)**: One RCU represents one strongly consistent read per second of items up to 4 KB in size. If you need to read larger items or use eventually consistent reads, the calculation changes accordingly. See [AWS DynamoDB Read/Write Capacity Mode](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadWriteCapacityMode.html) for details.
+1. **Export existing DynamoDB rules** to a YAML policy file:
 
-- **Write Capacity Units (WCU)**: One WCU represents one write per second of items up to 1 KB in size. Larger items consume proportionally more WCUs. See [AWS DynamoDB Provisioned Throughput](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ProvisionedThroughput.html) for details.
+| DynamoDB Attribute | YAML Policy Mapping |
+|--------------------|---------------------|
+| `Tag` | `assert: {tag: <Tag>, ...}` in a rule's `steps` |
+| `Values` (list) | `assert: {tag: <Tag>, in: [<Values>]}` |
+| `ValuePattern` (regex) | `assert: {tag: <Tag>, matches: "<ValuePattern>"}` |
+| `Required: true` | `assert: {tag: <Tag>, present: true}` |
+| `Required: false` | `filter: {tag: <Tag>, present: true}` before assert (optional tags only checked if present) |
+| `ResourceTypes` | `filter: {type: [<ResourceTypes>]}` (supports both Terraform names like `aws_s3_bucket` and AWS Config types like `AWS::S3::Bucket`) |
+| `AccountIds` | `filter: {account_id: [<AccountIds>]}` (omit wildcards; no filter = all accounts) |
+| `OrganizationalPaths` | `filter: {organizational_path: <path>}` (e.g., `root/Production` matches that OU and children) |
 
-**Billing Modes:**
-- **On-Demand**: Pay per request (~$1.25 per million reads, ~$6.25 per million writes). Best for unpredictable workloads
-- **Provisioned**: Reserve capacity upfront (cheaper for predictable workloads). This framework defaults to `PAY_PER_REQUEST`
+Example conversion:
+```yaml
+# DynamoDB rule:
+# { RuleId: "s3-env-tag", ResourceTypes: ["AWS::S3::*"], Tag: "Environment",
+#   Values: ["Production", "Development"], Required: true, AccountIds: ["*"] }
 
-### Capacity Estimation Formula
-
-Your DynamoDB capacity depends on:
-
-1. **Number of AWS Accounts**: `N_accounts`
-2. **Resource Types in Scope**: `N_resource_types` (e.g., EC2, S3, RDS)
-3. **Total Resources**: `N_resources` (average per account)
-4. **Resource Change Frequency**: `changes_per_day` (creation/modification rate)
-5. **Config Evaluation Frequency**: `evaluation_interval` (Six_Hours, TwentyFour_Hours, etc.)
-
-**Estimated Reads per Lambda Invocation**: 2-3 reads
-- 1 read to scan/query compliance rules
-- 1 read per resource type for rule matching
-
-**Estimated Writes per Lambda Invocation**: ~1 write
-- Optional: Update compliance state in DynamoDB (or use AWS Config for state)
-
-**Capacity Calculation:**
-```
-Daily Reads = (N_accounts × N_resources × changes_per_day × 2.5)
-            + (N_accounts × N_resources × (24 ÷ evaluation_interval_hours))
-
-Daily Writes = (N_accounts × N_resources × changes_per_day × 1)
-             + (rule_updates_per_day)
-
-RCU = (Daily Reads ÷ 86,400 seconds) × 1.5  # 1.5x buffer for spikes
-WCU = (Daily Writes ÷ 86,400 seconds) × 1.5 # 1.5x buffer for spikes
+# YAML policy:
+version: 1
+rules:
+  - name: s3-env-tag
+    description: S3 buckets must have Environment tag with valid values
+    steps:
+      - filter: {type: aws_s3_bucket}
+      - assert: {tag: Environment, present: true}
+      - assert: {tag: Environment, in: [Production, Development]}
 ```
 
-Note the AWS Config rule can be configured to use caching on the ruleset to greatly reduce associated costs, with the downside being the additional time is now takes to roll changes to the rules.
+2. **Validate the policy** with the built-in validator:
+```bash
+python3 modules/validation/assets/policy.py tagging-policy.yaml
+```
 
-### Cost Optimization Tips
-
-1. **Start with On-Demand**: Use the default `PAY_PER_REQUEST` billing mode to test your workload
-2. **Monitor CloudWatch Metrics**: Track consumed capacity over 2-4 weeks
-3. **Consider Provisioned Mode**: Switch to provisioned if consistent reads exceed 1M/day
-4. **Enable TTL**: Set a time-to-live on compliance history items to automatically delete old data
-5. **Rule Caching**: The Lambda handler implements in-memory caching to reduce DynamoDB reads by 80%+
-6. **DAX Consideration**: For very large deployments, consider DynamoDB Accelerator (DAX) for additional caching
-
-### Changing Billing Mode
-
+3. **Update the root module** configuration:
 ```hcl
-# Switch from on-demand to provisioned (update variables)
-module "tagging_compliance_central" {
+# Before (DynamoDB)
+module "tagging" {
   source = "appvia/tagging/aws"
+  version = "~> 1.0"
 
   compliance = {
     table = {
-      name           = "tagging-compliance-rules"
-      billing_mode   = "PROVISIONED"
-      read_capacity  = 100
-      write_capacity = 20
+      name = "tagging-compliance"
     }
   }
+  rules = [...]  # DynamoDB rules
+}
 
-  # ... other variables
+# After (S3 + YAML policy)
+module "tagging" {
+  source = "appvia/tagging/aws"
+  version = "~> 2.0"
+
+  policy = file("${path.module}/tagging-policy.yaml")
+  bucket = {
+    name = "tagging-compliance"
+  }
 }
 ```
+
+4. **Update config/pack modules** to pass the new S3 outputs:
+```hcl
+# Before
+module "config" {
+  source = "appvia/tagging/aws//modules/config"
+  compliance_rule_table_arn = module.tagging.compliance_rule_table_arn
+  # ...
+}
+
+# After
+module "config" {
+  source = "appvia/tagging/aws//modules/config"
+  policy_bucket_name = module.tagging.bucket_name
+  policy_bucket_arn  = module.tagging.bucket_arn
+  policy_key         = module.tagging.policy_key
+  policy_version     = module.tagging.policy_version
+  mappings_key       = module.tagging.mappings_key
+  mappings_version   = module.tagging.mappings_version
+  accounts_key       = module.tagging.accounts_key
+  kms_key_arn        = module.tagging.kms_key_arn
+  # ...
+}
+```
+
+### Removed Variables and Outputs
+
+**Removed root module variables:**
+- `compliance` (object with `table` configuration)
+- `rules` (list of DynamoDB rule objects)
+
+**Removed root module outputs:**
+- `compliance_rule_table_arn`
+- `compliance_rule_table_name`
+- `organizations_table_arn`
+- `organizations_table_name`
+
+**Removed config/pack module variables:**
+- `compliance_rule_table_arn`
+- `organizations_table_arn`
+
+### New Features
+
+The YAML policy format adds:
+- **Organizational path filtering**: `filter: {organizational_path: root/Production}` matches accounts in that OU subtree
+- **Account tag filtering**: `filter: {account_tag: CostCentre, present: true}` requires account-level tags
+- **Mixed resource type formats**: `filter: {type: [aws_s3_bucket, AWS::DynamoDB::Table]}` supports both Terraform and Config types in one rule
+- **Richer operators**: `contains`, `starts_with`, `ends_with`, `matches` (regex), case operators (`is_kebab`, `is_snake`, etc.)
+- **Severity levels**: `severity: warning` (logged, but resource is COMPLIANT) vs `severity: error` (NON_COMPLIANT, the default)
+
+### Resource Type Scope
+
+`mappings.yaml` is also the allowlist of evaluated resource types: a resource whose AWS Config type
+is not a value in the mappings is reported NOT_APPLICABLE ("is not taggable"). Resource types that
+the DynamoDB rules evaluated but that are missing from the shipped mappings therefore stop being
+evaluated after the upgrade. Add them through the root module's `mappings` variable, which is merged
+over the shipped file:
+
+```hcl
+module "tagging" {
+  source = "appvia/tagging/aws"
+
+  policy = file("${path.module}/tagging-policy.yaml")
+  mappings = {
+    aws_sagemaker_notebook_instance = "AWS::SageMaker::NotebookInstance"
+  }
+  # ...
+}
+```
+
+The validation Lambda logs a warning at load time listing Terraform type names used in `type`
+conditions or `exclude_resource_types` that are missing from the mappings.
+
+### Known Limitations
+
+- **CI action compatibility**: The `terraform-tag-check` action in `appvia-cicd-workflows` does not yet support `AWS::` types or the new `organizational_path`, `account_id`, `account_tag` targets. Policies using these features will be rejected by the action.
+- **Per-account config rules**: Inventory changes (account moves, tag updates) do not automatically trigger re-evaluation for per-account config module rules. Use the pack module (organization conformance pack) for automatic re-evaluation.
 
 ## Update Documentation
 
@@ -736,7 +861,6 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 
 1. Make changes to the `.terraform-docs.yml` file
 2. Fetch the `terraform-docs` binary (https://terraform-docs.io/user-guide/installation/)
-3. Run `terraform-docs markdown table --output-file ${PWD}/README.md --output-mode inject .`
 3. Run `terraform-docs markdown table --output-file ${PWD}/README.md --output-mode inject .`
 
 <!-- BEGIN_TF_DOCS -->
@@ -750,22 +874,27 @@ The `terraform-docs` utility is used to generate this README. Follow the below s
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_compliance"></a> [compliance](#input\_compliance) | Configuration for the compliance feature. | <pre>object({<br/>    table = object({<br/>      ## The billing mode for the DynamoDB table. Valid values are PROVISIONED and PAY_PER_REQUEST.<br/>      billing_mode = optional(string, "PAY_PER_REQUEST")<br/>      ## The KMS key ID or ARN to use for server-side encryption of the DynamoDB table.<br/>      kms_key_id = optional(string, null)<br/>      ## The name of the DynamoDB table to store compliance rules.<br/>      name = optional(string, "tagging-compliance")<br/>      ## Whether to enable point-in-time recovery for the DynamoDB table. Defaults to false.<br/>      point_in_time_recovery_enabled = optional(bool, false)<br/>      ## The read capacity units for the DynamoDB table (only applicable if billing_mode is PROVISIONED).<br/>      read_capacity = optional(number, null)<br/>      ## The write capacity units for the DynamoDB table (only applicable if billing_mode is PROVISIONED).<br/>      write_capacity = optional(number, null)<br/>    })<br/>  })</pre> | <pre>{<br/>  "table": {}<br/>}</pre> | no |
-| <a name="input_enable_organizations"></a> [enable\_organizations](#input\_enable\_organizations) | Enable organization access to the DynamoDB table. When enabled, allows any account in the organization to access the table. | `bool` | `true` | no |
-| <a name="input_organizations"></a> [organizations](#input\_organizations) | Configuration for the organizations table and lambda. | <pre>object({<br/>    table = object({<br/>      ## The billing mode for the DynamoDB table. Valid values are PROVISIONED and PAY_PER_REQUEST.<br/>      billing_mode = optional(string, "PAY_PER_REQUEST")<br/>      ## The KMS key ID or ARN to use for server-side encryption of the DynamoDB table.<br/>      kms_key_id = optional(string, null)<br/>      ## The name of the DynamoDB table to store organization metadata for AWS resources.<br/>      name = optional(string, "organization-compliance")<br/>      ## Whether to enable point-in-time recovery for the DynamoDB table. Defaults to false.<br/>      point_in_time_recovery_enabled = optional(bool, false)<br/>      ## The read capacity units for the DynamoDB table (only applicable if billing_mode is PROVISIONED).<br/>      read_capacity = optional(number, null)<br/>      ## The write capacity units for the DynamoDB table (only applicable if billing_mode is PROVISIONED).<br/>      write_capacity = optional(number, null)<br/>    }),<br/>    lambda = optional(object({<br/>      ## The description of the Lambda function to handle AWS Organization account movements.<br/>      description = optional(string, "Handles AWS Organization account movements for tagging compliance.")<br/>      ## The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL.<br/>      log_level = optional(string, "INFO")<br/>      ## The amount of memory in MB allocated to the Lambda function.<br/>      memory_size = optional(number, 128)<br/>      ## The name of the Lambda function to handle AWS Organization account movements.<br/>      name = optional(string, "organization-compliance")<br/>      ## The runtime environment for the Lambda function.<br/>      runtime = optional(string, "python3.12")<br/>      ## The timeout for the Lambda function in seconds.<br/>      timeout = optional(number, 30)<br/>    }), {})<br/>  })</pre> | `null` | no |
-| <a name="input_organizations_id"></a> [organizations\_id](#input\_organizations\_id) | AWS Organization ID to allow access to the DynamoDB table/s | `string` | `null` | no |
-| <a name="input_rules"></a> [rules](#input\_rules) | List of compliance rules to be stored in the DynamoDB table. | <pre>list(object({<br/>    AccountIds          = optional(list(string), [])<br/>    Enabled             = optional(bool, true)<br/>    Required            = optional(bool, true)<br/>    ResourceTypes       = list(string)<br/>    RuleId              = string<br/>    Tag                 = string<br/>    ValuePattern        = optional(string, null)<br/>    Values              = optional(list(string), [])<br/>    OrganizationalPaths = optional(list(string), [])<br/>  }))</pre> | `[]` | no |
-| <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to the DynamoDB table. | `map(string)` | `{}` | no |
+| <a name="input_policy"></a> [policy](#input\_policy) | The tagging policy as YAML content (version: 1), uploaded to the bucket as policy.yaml. Typically file("tagging-policy.yaml"). | `string` | n/a | yes |
+| <a name="input_bucket"></a> [bucket](#input\_bucket) | Configuration for the S3 bucket holding the tagging policy, the resource type mappings and the account inventory. | <pre>object({<br/>    ## The name of the S3 bucket to provision.<br/>    name = optional(string, "tagging-compliance")<br/>    ## The ARN of an existing KMS key used to encrypt the bucket (aws:kms). When null, AES256 is used. The module never creates a key.<br/>    kms_key_arn = optional(string)<br/>    ## Whether to delete all objects (including versions) when the bucket is destroyed.<br/>    force_destroy = optional(bool, false)<br/>  })</pre> | `{}` | no |
+| <a name="input_enable_organizations"></a> [enable\_organizations](#input\_enable\_organizations) | Enable organization access to the policy bucket. When enabled, allows any account in the organization to read the policy, mappings and inventory. | `bool` | `true` | no |
+| <a name="input_mappings"></a> [mappings](#input\_mappings) | Additional Terraform to AWS Config resource type mappings (e.g. aws\_s3\_bucket = "AWS::S3::Bucket"), merged over the shipped mappings file. The mappings also define the taggable resource types. | `map(string)` | `{}` | no |
+| <a name="input_organizations"></a> [organizations](#input\_organizations) | Configuration for the organizations inventory lambda. When null, no account inventory is maintained. | <pre>object({<br/>    ## The name of the organization conformance pack to re-put with a new InventoryVersion when the<br/>    ## inventory changes (forces an org-wide re-evaluation). Requires conformance_pack_template_uri.<br/>    conformance_pack_name = optional(string)<br/>    ## The S3 URI (s3://bucket/key) of the conformance pack template. Build it from the values passed<br/>    ## to the pack module's s3_bucket_name and s3_template_key; referencing the pack module output<br/>    ## s3_template_uri creates a dependency cycle, as the pack consumes this module's accounts_key.<br/>    conformance_pack_template_uri = optional(string)<br/>    ## Trigger the sync on account create, close, move, tag and untag events. Organizations CloudTrail<br/>    ## events are delivered to EventBridge only in us-east-1, so the module must be deployed in<br/>    ## us-east-1 for this trigger to fire; elsewhere only the scheduled sync runs.<br/>    enable_account_event_sync = optional(bool, true)<br/>    lambda = optional(object({<br/>      ## The description of the Lambda function to handle AWS Organization account movements.<br/>      description = optional(string, "Handles AWS Organization account movements for tagging compliance.")<br/>      ## The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL.<br/>      log_level = optional(string, "INFO")<br/>      ## The amount of memory in MB allocated to the Lambda function.<br/>      memory_size = optional(number, 128)<br/>      ## The name of the Lambda function to handle AWS Organization account movements.<br/>      name = optional(string, "organization-compliance")<br/>      ## The runtime environment for the Lambda function.<br/>      runtime = optional(string, "python3.12")<br/>      ## The timeout for the Lambda function in seconds.<br/>      timeout = optional(number, 60)<br/>    }), {})<br/>  })</pre> | `null` | no |
+| <a name="input_organizations_id"></a> [organizations\_id](#input\_organizations\_id) | AWS Organization ID allowed to read the policy bucket. | `string` | `null` | no |
+| <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to apply to all resources. | `map(string)` | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| <a name="output_compliance_rule_table_arn"></a> [compliance\_rule\_table\_arn](#output\_compliance\_rule\_table\_arn) | The ARN of the DynamoDB table used for tagging compliance. |
-| <a name="output_compliance_rule_table_name"></a> [compliance\_rule\_table\_name](#output\_compliance\_rule\_table\_name) | The name of the DynamoDB table used for tagging compliance. |
-| <a name="output_organizations_id"></a> [organizations\_id](#output\_organizations\_id) | The ID of the AWS Organization allowed access to the DynamoDB table. |
+| <a name="output_accounts_key"></a> [accounts\_key](#output\_accounts\_key) | The object key of the account inventory in the policy bucket, or null when organizations is not enabled. |
+| <a name="output_bucket_arn"></a> [bucket\_arn](#output\_bucket\_arn) | The ARN of the S3 bucket holding the tagging policy, mappings and inventory. |
+| <a name="output_bucket_name"></a> [bucket\_name](#output\_bucket\_name) | The name of the S3 bucket holding the tagging policy, mappings and inventory. |
+| <a name="output_kms_key_arn"></a> [kms\_key\_arn](#output\_kms\_key\_arn) | The ARN of the KMS key encrypting the policy bucket, or null when AES256 is used. |
+| <a name="output_mappings_key"></a> [mappings\_key](#output\_mappings\_key) | The object key of the resource type mappings in the policy bucket. |
+| <a name="output_mappings_version"></a> [mappings\_version](#output\_mappings\_version) | The sha256 of the rendered mappings, used to force re-evaluation when the mappings change. |
+| <a name="output_organizations_id"></a> [organizations\_id](#output\_organizations\_id) | The ID of the AWS Organization allowed to read the policy bucket. |
 | <a name="output_organizations_lambda_arn"></a> [organizations\_lambda\_arn](#output\_organizations\_lambda\_arn) | The ARN of the Lambda function used for handling organization account movements. |
 | <a name="output_organizations_lambda_name"></a> [organizations\_lambda\_name](#output\_organizations\_lambda\_name) | The name of the Lambda function used for handling organization account movements. |
-| <a name="output_organizations_table_arn"></a> [organizations\_table\_arn](#output\_organizations\_table\_arn) | The ARN of the DynamoDB table used for storing organization metadata. |
-| <a name="output_organizations_table_name"></a> [organizations\_table\_name](#output\_organizations\_table\_name) | The name of the DynamoDB table used for storing organization metadata. |
+| <a name="output_policy_key"></a> [policy\_key](#output\_policy\_key) | The object key of the tagging policy in the policy bucket. |
+| <a name="output_policy_version"></a> [policy\_version](#output\_policy\_version) | The sha256 of the tagging policy, used to force re-evaluation when the policy changes. |
 <!-- END_TF_DOCS -->

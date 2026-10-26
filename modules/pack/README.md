@@ -14,24 +14,31 @@ This module creates an AWS Config Conformance Pack for tagging compliance that c
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                  Management Account                          │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  S3 Bucket                                            │  │
-│  │  • conformance-pack.yaml (template)                  │  │
-│  │  • Versioning enabled                                │  │
-│  │  • Encrypted with KMS                                │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                          │                                   │
-│  ┌──────────────────────▼───────────────────────────────┐  │
-│  │  AWS Config Organization Conformance Pack             │  │
-│  │  • Deploys to all accounts                           │  │
-│  │  • Excludes specified accounts                       │  │
-│  │  • References Lambda function                        │  │
-│  │  • References DynamoDB table                         │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                  Management Account                            │
+│                                                                │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  Policy Bucket (S3)                                     │  │
+│  │  • policy.yaml (tagging rules)                         │  │
+│  │  • mappings.yaml (resource type mappings)              │  │
+│  │  • accounts.yaml (account inventory)                   │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  Pack Bucket (S3)                                       │  │
+│  │  • conformance-pack.yaml (CloudFormation template)     │  │
+│  │  • Versioning enabled                                   │  │
+│  │  • Encrypted (KMS or AES256)                           │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                          │                                     │
+│  ┌──────────────────────▼─────────────────────────────────┐  │
+│  │  AWS Config Organization Conformance Pack               │  │
+│  │  • Deploys to all accounts                             │  │
+│  │  • Excludes specified accounts                         │  │
+│  │  • Parameters: PolicyVersion, MappingsVersion,         │  │
+│  │    InventoryVersion (triggers re-evaluation on change) │  │
+│  └────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────┘
                           │
        ┌──────────────────┼──────────────────┐
        │                  │                  │
@@ -41,11 +48,17 @@ This module creates an AWS Config Conformance Pack for tagging compliance that c
 │             │    │             │    │             │
 │ Config Rule │    │ Config Rule │    │ Config Rule │
 │      ↓      │    │      ↓      │    │      ↓      │
-│   Lambda    │    │   Lambda    │    │   Lambda    │
-│             │    │             │    │             │
-│  Evaluates  │    │  Evaluates  │    │  Evaluates  │
-│  Resources  │    │  Resources  │    │  Resources  │
-└─────────────┘    └─────────────┘    └─────────────┘
+│   Lambda ───┼────┼─> Reads ────┼────┼───┐         │
+│             │    │             │    │   │         │
+│  Evaluates  │    │  Evaluates  │    │   │         │
+│  Resources  │    │  Resources  │    │   │         │
+└─────────────┘    └─────────────┘    │   │         │
+                                       │   │         │
+                                       ▼   ▼         │
+                            ┌──────────────────────┐ │
+                            │  Policy Bucket (S3)  │ │
+                            │  Cross-account read  │◀┘
+                            └──────────────────────┘
 ```
 
 ## Usage
@@ -61,13 +74,26 @@ module "tagging_conformance_pack" {
   conformance_pack_name = "org-tagging-compliance"
   s3_bucket_name        = "my-org-conformance-packs-123456789012"
   
+  # Policy, mappings, and inventory configuration
+  policy_bucket_name = "org-tagging-policy"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-policy"
+  policy_key         = "policy.yaml"
+  mappings_key       = "mappings.yaml"
+  accounts_key       = "accounts.yaml"
+  
+  # Version hashes from root module outputs
+  policy_version   = "abc123..."
+  mappings_version = "def456..."
+  
   # Enable organization-wide deployment
   deploy_organization_wide = true
   excluded_accounts        = ["111111111111"]  # Exclude sandbox accounts
 
-  # Reference the Lambda function and DynamoDB table
+  # Optional: reference existing Lambda (otherwise module creates one)
   lambda_function_arn = "arn:aws:lambda:us-east-1:999999999999:function:tagging-compliance-evaluator"
-  dynamodb_table_arn  = "arn:aws:dynamodb:us-east-1:999999999999:table/tagging-compliance-rules"
+  
+  # Optional: KMS key for policy bucket encryption
+  kms_key_arn = "arn:aws:kms:us-east-1:999999999999:key/..."
 
   # Specify resource types to evaluate
   resource_types = [
@@ -99,11 +125,22 @@ module "tagging_conformance_pack" {
   conformance_pack_name = "tagging-compliance"
   s3_bucket_name        = "tagging-conformance-pack-123456789012"
   
+  # Policy and mappings configuration
+  policy_bucket_name = "org-tagging-policy"
+  policy_bucket_arn  = "arn:aws:s3:::org-tagging-policy"
+  policy_key         = "policy.yaml"
+  mappings_key       = "mappings.yaml"
+  accounts_key       = null  # No inventory for account-level deployment
+  
+  # Version hashes
+  policy_version   = var.policy_version
+  mappings_version = var.mappings_version
+  
   # Account-level deployment
   deploy_organization_wide = false
 
-  lambda_function_arn = module.tagging_config.lambda_function_arn
-  dynamodb_table_arn  = data.aws_dynamodb_table.compliance_rules.arn
+  # Module creates a Lambda function automatically
+  lambda_function_arn = null
 
   resource_types = ["AWS::*"]
 
@@ -116,37 +153,35 @@ module "tagging_conformance_pack" {
 
 ### Complete Organization Example
 
-Complete setup with central rules, per-account Lambda, and organization conformance pack:
+Complete setup with policy in S3, Lambda, and organization conformance pack:
 
 ```hcl
-# Management Account - Central DynamoDB table and conformance pack
+# Management Account - Central policy bucket
 module "tagging_central" {
   source = "appvia/tagging/aws"
 
-  dynamodb_table_name = "org-tagging-compliance"
-  organization_id     = data.aws_organizations_organization.current.id
+  s3_bucket_name  = "org-tagging-policy"
+  organization_id = data.aws_organizations_organization.current.id
 
-  rules = [
-    {
-      RuleId       = "global-environment-tag"
-      ResourceType = "AWS::*"
-      Tag          = "Environment"
-      Required     = true
-      Values       = ["production", "staging", "development"]
-      AccountIds   = ["*"]
-      Enabled      = true
-    }
-  ]
+  # Policy is written to S3 as policy.yaml
+  policy = file("${path.module}/tagging-policy.yaml")
+  
+  # Mappings are written to S3 as mappings.yaml
+  mappings = file("${path.module}/mappings.yaml")
 }
 
 # Deploy Lambda to management account (or shared services)
 module "tagging_lambda" {
-  source = "appvia/tagging/aws//modules/config"
+  source = "appvia/tagging/aws//modules/validation"
 
-  dynamodb_table_arn    = module.tagging_central.dynamodb_arn
-  config_resource_types = ["AWS::*"]
-  lambda_name           = "org-tagging-evaluator"
-  config_name           = "org-tagging-compliance"
+  policy_bucket_name = module.tagging_central.bucket_name
+  policy_bucket_arn  = module.tagging_central.bucket_arn
+  policy_key         = "policy.yaml"
+  mappings_key       = "mappings.yaml"
+  accounts_key       = "accounts.yaml"
+  
+  lambda_name      = "org-tagging-evaluator"
+  lambda_role_name = "org-tagging-evaluator"
 }
 
 # Create organization conformance pack
@@ -157,8 +192,19 @@ module "tagging_conformance_pack" {
   s3_bucket_name           = "org-conformance-packs-${data.aws_caller_identity.current.account_id}"
   deploy_organization_wide = true
 
-  lambda_function_arn = module.tagging_lambda.lambda_function_arn
-  dynamodb_table_arn  = module.tagging_central.dynamodb_arn
+  # Policy configuration
+  policy_bucket_name = module.tagging_central.bucket_name
+  policy_bucket_arn  = module.tagging_central.bucket_arn
+  policy_key         = "policy.yaml"
+  mappings_key       = "mappings.yaml"
+  accounts_key       = "accounts.yaml"
+  
+  # Version hashes trigger re-evaluation
+  policy_version   = module.tagging_central.policy_version
+  mappings_version = module.tagging_central.mappings_version
+
+  # Use the shared Lambda
+  lambda_function_arn = module.tagging_lambda.lambda_arn
 
   resource_types          = ["AWS::*"]
   max_execution_frequency = "TwentyFour_Hours"
@@ -176,42 +222,53 @@ module "tagging_conformance_pack" {
 }
 ```
 
-### With Custom Parameters
+### Bootstrap: First Apply with Policy Bucket Created
 
-Pass custom parameters to the conformance pack:
+On the first apply when the policy bucket is created in the same configuration, pass `inventory_version = "none"` to avoid reading the (not yet existing) inventory object at plan time:
 
 ```hcl
 module "tagging_conformance_pack" {
   source = "appvia/tagging/aws//modules/pack"
 
-  conformance_pack_name    = "tagging-compliance"
-  s3_bucket_name           = "conformance-packs"
+  conformance_pack_name = "tagging-compliance"
+  s3_bucket_name        = "conformance-packs"
+  
+  policy_bucket_name = aws_s3_bucket.policy.id
+  policy_bucket_arn  = aws_s3_bucket.policy.arn
+  policy_key         = "policy.yaml"
+  mappings_key       = "mappings.yaml"
+  accounts_key       = "accounts.yaml"
+  
+  policy_version   = "abc123..."
+  mappings_version = "def456..."
+  
+  # Bootstrap: pin inventory version to "none" on first apply
+  inventory_version = "none"  # Remove this after first apply
+  
   deploy_organization_wide = true
+  lambda_function_arn      = var.lambda_function_arn
 
-  lambda_function_arn = var.lambda_function_arn
-  dynamodb_table_arn  = var.dynamodb_table_arn
-
-  # Custom parameters
-  input_parameters = {
+  tags = {
     Environment = "production"
-    Severity    = "high"
+    ManagedBy   = "terraform"
   }
-
-  # Enable S3 encryption
-  s3_kms_key_id = aws_kms_key.conformance_packs.id
 }
 ```
+
+After the first apply completes, remove the `inventory_version` line so the module reads the actual content-sha256 from the inventory object metadata.
 
 ## Conformance Pack Template
 
 The module generates a CloudFormation-compatible conformance pack template that includes:
 
 - AWS Config custom rule referencing your Lambda function
-- Scope configuration for resource types
+- Scope configuration for resource types (e.g., `AWS::EC2::Instance`, `AWS::S3::Bucket`)
 - Event triggers for configuration changes and scheduled evaluations
-- Input parameters for DynamoDB table ARN
+- Pack parameters `PolicyVersion`, `MappingsVersion` and `InventoryVersion` (type String, default `none`), passed to the Config rule's `InputParameters`
 
 The template is stored in S3 and can be versioned for change tracking.
+
+The version parameters carry content hashes only; the Lambda reads the policy location from its environment variables. Changing any of them updates the Config rule's input parameters and makes AWS Config re-evaluate every in-scope resource across all accounts. The module sets `PolicyVersion` and `MappingsVersion` from the `policy_version` and `mappings_version` inputs (typically from the root module outputs). `InventoryVersion` is read from the S3 object's `content-sha256` metadata (or set to `none` when no inventory is configured). The organizations Lambda re-puts the pack with a new `InventoryVersion` when the inventory changes, triggering automatic re-evaluation.
 
 ## Deployment Strategies
 
@@ -228,6 +285,14 @@ module "tagging_pack_phase1" {
   s3_bucket_name           = "conformance-packs"
   deploy_organization_wide = true
 
+  policy_bucket_name = var.policy_bucket_name
+  policy_bucket_arn  = var.policy_bucket_arn
+  policy_key         = "policy.yaml"
+  mappings_key       = "mappings.yaml"
+  accounts_key       = "accounts.yaml"
+  policy_version     = var.policy_version
+  mappings_version   = var.mappings_version
+
   excluded_accounts = [
     # Exclude production accounts initially
     "111111111111",  # prod-account-1
@@ -235,7 +300,6 @@ module "tagging_pack_phase1" {
   ]
 
   lambda_function_arn = var.lambda_function_arn
-  dynamodb_table_arn  = var.dynamodb_table_arn
 }
 
 # Phase 2: Deploy to all accounts (remove exclusions)
@@ -257,11 +321,18 @@ module "tagging_pack_prod" {
   deploy_organization_wide = true
   excluded_accounts        = var.non_prod_accounts
 
+  policy_bucket_name = var.policy_bucket_name
+  policy_bucket_arn  = var.policy_bucket_arn
+  policy_key         = "policy.yaml"
+  mappings_key       = "mappings.yaml"
+  accounts_key       = "accounts.yaml"
+  policy_version     = var.policy_version
+  mappings_version   = var.mappings_version
+
   resource_types          = ["AWS::*"]
   max_execution_frequency = "Six_Hours"  # More frequent
 
   lambda_function_arn = var.lambda_function_arn
-  dynamodb_table_arn  = var.dynamodb_table_arn
 }
 
 # Development conformance pack
@@ -274,11 +345,18 @@ module "tagging_pack_dev" {
   deploy_organization_wide = true
   excluded_accounts        = var.prod_accounts
 
+  policy_bucket_name = var.policy_bucket_name
+  policy_bucket_arn  = var.policy_bucket_arn
+  policy_key         = "policy.yaml"
+  mappings_key       = "mappings.yaml"
+  accounts_key       = "accounts.yaml"
+  policy_version     = var.policy_version
+  mappings_version   = var.mappings_version
+
   resource_types          = ["AWS::*"]
   max_execution_frequency = "TwentyFour_Hours"  # Less frequent
 
   lambda_function_arn = var.lambda_function_arn
-  dynamodb_table_arn  = var.dynamodb_table_arn
 }
 ```
 
@@ -332,9 +410,11 @@ aws configservice describe-conformance-pack-compliance \
 
 - AWS Config must be enabled in target accounts
 - AWS Organizations (for organization-wide deployment)
-- Lambda function must be deployed and accessible
-- DynamoDB table must have organization-wide read access
+- Lambda function must be deployed and accessible from member accounts
+- S3 bucket with tagging policy, mappings, and inventory must be accessible with organization-wide read permissions
 - IAM permissions for Config to invoke Lambda function
+- Lambda must have S3 read access to the policy bucket (cross-account if in different account)
+- If policy bucket is encrypted with KMS, Lambda needs `kms:Decrypt` permission
 
 ## Limitations
 
@@ -360,28 +440,40 @@ aws configservice describe-conformance-pack-compliance \
 
 If conformance pack deployment fails:
 
-1. Check Lambda function exists and is accessible
-2. Verify DynamoDB table ARN is correct
+1. Check Lambda function exists and is accessible from member accounts
+2. Verify policy bucket exists and policy/mappings objects are present
 3. Ensure AWS Config is enabled in target accounts
-4. Review IAM permissions for Config service
-5. Check CloudFormation stack events for errors
+4. Review IAM permissions for Config service to invoke Lambda
+5. Check CloudFormation stack events for errors in the Config console
+6. Verify `policy_version` and `mappings_version` are set correctly
 
 ### Compliance Evaluation Issues
 
 If resources aren't being evaluated:
 
-1. Verify Lambda function has correct permissions
-2. Check DynamoDB table access from target accounts
-3. Review Lambda function logs in CloudWatch
-4. Ensure resource types match what you're evaluating
-5. Verify Config recorder is active
+1. Verify Lambda function has S3 read access to the policy bucket
+2. Check Lambda has `kms:Decrypt` permission if policy bucket is encrypted
+3. Review Lambda function logs in CloudWatch for policy loading errors
+4. Ensure resource types in `resource_types` match what you're evaluating
+5. Verify Config recorder is active in member accounts
+6. Check that the resource type is mapped in `mappings.yaml`
+
+### Re-evaluation Not Triggering
+
+If changing the policy doesn't trigger re-evaluation:
+
+1. Verify `policy_version` input changes when the policy changes
+2. Check the conformance pack input parameters in the Config console
+3. For inventory changes, verify the organizations Lambda is updating the pack's `InventoryVersion`
+4. Review Terraform plan to ensure the pack resource is being updated
 
 ## Security Considerations
 
-- **S3 Bucket Access**: Bucket is private by default with public access blocked
-- **Encryption**: Enable KMS encryption for sensitive data
-- **Cross-Account Access**: DynamoDB table requires organization-wide read policy
-- **Lambda Permissions**: Function needs Config and DynamoDB access
+- **S3 Bucket Access**: Both pack bucket and policy bucket are private by default with public access blocked
+- **Encryption**: Enable KMS encryption for sensitive data (both buckets support optional KMS encryption)
+- **Cross-Account Access**: Policy bucket requires organization-wide read policy for Lambda in member accounts
+- **Lambda Permissions**: Function needs Config, S3, and KMS (if encrypted) access
+- **KMS Key Policy**: If using KMS, the key policy must grant `kms:Decrypt` to the Lambda role and organization principals
 - **Least Privilege**: Apply minimal permissions for conformance pack operations
 
 ## Update Documentation
@@ -403,8 +495,10 @@ The `terraform-docs` utility is used to generate documentation. Follow these ste
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_compliance_rule_table_arn"></a> [compliance\_rule\_table\_arn](#input\_compliance\_rule\_table\_arn) | ARN of the DynamoDB table containing compliance rules | `string` | n/a | yes |
+| <a name="input_mappings_version"></a> [mappings\_version](#input\_mappings\_version) | A hash of the mappings content (root module output mappings\_version), passed as the MappingsVersion pack parameter to force re-evaluation on change. | `string` | n/a | yes |
+| <a name="input_policy_version"></a> [policy\_version](#input\_policy\_version) | A hash of the tagging policy content (root module output policy\_version), passed as the PolicyVersion pack parameter to force re-evaluation on change. | `string` | n/a | yes |
 | <a name="input_s3_bucket_name"></a> [s3\_bucket\_name](#input\_s3\_bucket\_name) | Name of the S3 bucket to store the conformance pack template | `string` | n/a | yes |
+| <a name="input_accounts_key"></a> [accounts\_key](#input\_accounts\_key) | The object key of the account inventory in the policy bucket. When null, no inventory is read and organizational\_path/account\_tag rules are ignored. | `string` | `null` | no |
 | <a name="input_cloudwatch_logs_kms_key_id"></a> [cloudwatch\_logs\_kms\_key\_id](#input\_cloudwatch\_logs\_kms\_key\_id) | KMS key ID for encrypting CloudWatch Logs (optional) | `string` | `null` | no |
 | <a name="input_cloudwatch_logs_log_group_class"></a> [cloudwatch\_logs\_log\_group\_class](#input\_cloudwatch\_logs\_log\_group\_class) | Log group class for CloudWatch Logs. Valid values are STANDARD and INFREQUENT\_ACCESS. | `string` | `"STANDARD"` | no |
 | <a name="input_cloudwatch_logs_retention_in_days"></a> [cloudwatch\_logs\_retention\_in\_days](#input\_cloudwatch\_logs\_retention\_in\_days) | Number of days to retain CloudWatch Logs. Valid values are 0 (retain indefinitely), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, or 1827. | `number` | `7` | no |
@@ -412,10 +506,17 @@ The `terraform-docs` utility is used to generate documentation. Follow these ste
 | <a name="input_conformance_pack_name"></a> [conformance\_pack\_name](#input\_conformance\_pack\_name) | Name of the AWS Config Conformance Pack | `string` | `"tagging-compliance"` | no |
 | <a name="input_deploy_organization_wide"></a> [deploy\_organization\_wide](#input\_deploy\_organization\_wide) | Whether to deploy the conformance pack organization-wide (requires Organizations management account) | `bool` | `false` | no |
 | <a name="input_excluded_accounts"></a> [excluded\_accounts](#input\_excluded\_accounts) | List of AWS account IDs to exclude from organization conformance pack deployment | `list(string)` | `[]` | no |
-| <a name="input_input_parameters"></a> [input\_parameters](#input\_input\_parameters) | Map of input parameters to pass to the conformance pack | `map(string)` | `{}` | no |
+| <a name="input_input_parameters"></a> [input\_parameters](#input\_input\_parameters) | Map of additional input parameters to pass to the conformance pack. PolicyVersion and MappingsVersion are always set from policy\_version and mappings\_version; InventoryVersion is read from the content-sha256 metadata of the inventory object (or none). | `map(string)` | `{}` | no |
+| <a name="input_inventory_version"></a> [inventory\_version](#input\_inventory\_version) | Pin the InventoryVersion pack parameter instead of reading the content-sha256 metadata of the inventory object. When set, no S3 data sources are read. Bootstrap: pass "none" on the first apply when the policy bucket is created in the same configuration (the bucket does not exist at plan time), then remove it so the version follows the inventory. | `string` | `null` | no |
+| <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | The ARN of the KMS key encrypting the policy bucket. When set, the lambda is granted kms:Decrypt on it. | `string` | `null` | no |
 | <a name="input_lambda_function_arn"></a> [lambda\_function\_arn](#input\_lambda\_function\_arn) | ARN of the Lambda function that evaluates compliance | `string` | `null` | no |
+| <a name="input_lambda_runtime"></a> [lambda\_runtime](#input\_lambda\_runtime) | The runtime environment for the validation Lambda function (ignored when lambda\_function\_arn is set). | `string` | `"python3.14"` | no |
+| <a name="input_mappings_key"></a> [mappings\_key](#input\_mappings\_key) | The object key of the resource type mappings in the policy bucket. | `string` | `"mappings.yaml"` | no |
 | <a name="input_max_execution_frequency"></a> [max\_execution\_frequency](#input\_max\_execution\_frequency) | Maximum frequency for Config rule evaluation | `string` | `"TwentyFour_Hours"` | no |
 | <a name="input_pack_description"></a> [pack\_description](#input\_pack\_description) | Description of the conformance pack | `string` | `"AWS Config Conformance Pack for validating resource tagging compliance"` | no |
+| <a name="input_policy_bucket_arn"></a> [policy\_bucket\_arn](#input\_policy\_bucket\_arn) | The ARN of the S3 bucket holding the tagging policy, mappings and inventory. Required unless lambda\_function\_arn is provided. | `string` | `null` | no |
+| <a name="input_policy_bucket_name"></a> [policy\_bucket\_name](#input\_policy\_bucket\_name) | The name of the S3 bucket holding the tagging policy, mappings and inventory. Required unless lambda\_function\_arn is provided. | `string` | `null` | no |
+| <a name="input_policy_key"></a> [policy\_key](#input\_policy\_key) | The object key of the tagging policy in the policy bucket. | `string` | `"policy.yaml"` | no |
 | <a name="input_resource_types"></a> [resource\_types](#input\_resource\_types) | List of AWS resource types to evaluate (e.g., AWS::EC2::Instance) | `list(string)` | <pre>[<br/>  "AWS::*"<br/>]</pre> | no |
 | <a name="input_s3_enable_versioning"></a> [s3\_enable\_versioning](#input\_s3\_enable\_versioning) | Enable versioning for the S3 bucket | `bool` | `true` | no |
 | <a name="input_s3_kms_key_id"></a> [s3\_kms\_key\_id](#input\_s3\_kms\_key\_id) | KMS key ID for S3 bucket encryption (optional) | `string` | `null` | no |
