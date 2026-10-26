@@ -70,6 +70,12 @@ variable "lambda_function_arn" {
   default     = null
 }
 
+variable "lambda_runtime" {
+  description = "The runtime environment for the validation Lambda function (ignored when lambda_function_arn is set)."
+  type        = string
+  default     = "python3.14"
+}
+
 variable "mappings_key" {
   description = "The object key of the resource type mappings in the policy bucket."
   type        = string

@@ -92,6 +92,7 @@ module "lambda_function" {
   lambda_description                = format("Lambda function to evaluate tagging compliance for conformance pack %s", var.conformance_pack_name)
   lambda_name                       = "${var.config_rule_name}-compliance-tagging"
   lambda_role_name                  = "${var.config_rule_name}-compliance-tagging"
+  lambda_runtime                    = var.lambda_runtime
   mappings_key                      = var.mappings_key
   policy_bucket_arn                 = var.policy_bucket_arn
   policy_bucket_name                = var.policy_bucket_name

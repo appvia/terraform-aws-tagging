@@ -23,6 +23,7 @@ jobs:
       working-directory: .
 
   python-format:
+    name: Python Code Formatting
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -45,6 +46,7 @@ jobs:
           fi
 
   python-tests:
+    name: Python Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -55,7 +57,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install Dependencies
         run: |
-          pip3 install pytest boto3
+          pip3 install pytest boto3 -r modules/validation/assets/requirements.txt -r modules/organizations/assets/requirements.txt
       - name: Run unit tests
         env:
           AWS_DEFAULT_REGION: "eu-west-2"

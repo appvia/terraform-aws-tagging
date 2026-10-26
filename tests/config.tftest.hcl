@@ -9,10 +9,12 @@ run "basic" {
     source = "./modules/config"
   }
 
+  ## Build the lambda against the python shipped on the CI runners (python3.14 is not available)
   variables {
     config_name           = "tagging-compliance"
     config_resource_types = ["AWS::EC2::Instance"]
     lambda_name           = "tagging-compliance-evaluator"
+    lambda_runtime        = "python3.12"
     mappings_version      = "mappings-hash"
     policy_bucket_arn     = "arn:aws:s3:::tagging-compliance"
     policy_bucket_name    = "tagging-compliance"
