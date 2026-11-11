@@ -52,7 +52,7 @@ variable "organizations" {
       ## The name of the Lambda function to handle AWS Organization account movements.
       name = optional(string, "organization-compliance")
       ## The runtime environment for the Lambda function.
-      runtime = optional(string, "python3.12")
+      runtime = optional(string, "python3.14")
       ## The timeout for the Lambda function in seconds.
       timeout = optional(number, 60)
     }), {})
