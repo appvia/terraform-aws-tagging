@@ -109,7 +109,7 @@ def parse_ou_path(ou_id: str, ou_map: Dict[str, Dict[str, Any]]) -> str:
     # Reverse to get root-to-leaf order
     path_parts.reverse()
 
-    return "/".join(path_parts) if path_parts else "root"
+    return "/".join(path_parts).lower() if path_parts else "root"
 
 
 def build_ou_map() -> Dict[str, Dict[str, Any]]:
@@ -209,7 +209,7 @@ def list_accounts_with_details(ou_map: Dict[str, Dict[str, Any]]) -> List[Accoun
                     AccountId=account_id,
                     AccountName=account_name,
                     OUPath=ou_path,
-                    Status=status,
+                    Status=status.lower(),
                     Tags=list_account_tags(account_id),
                 )
                 accounts.append(account_info)

@@ -1035,6 +1035,33 @@ class TestLambdaHandler:
         # Store functions should not be called for filtered resources
         mock_store.load_policy.assert_not_called()
 
+    @patch.dict(
+        os.environ,
+        {
+            "POLICY_BUCKET": "test-bucket",
+        },
+    )
+    @patch("handler.store")
+    @patch("handler.config_client")
+    def test_lambda_handler_scheduled_notification(
+        self, mock_config_client, mock_store, sample_config_event
+    ):
+        """Test lambda handler ignores periodic triggers, which carry no configuration item."""
+        event = sample_config_event.copy()
+        event["invokingEvent"] = json.dumps(
+            {
+                "awsAccountId": "123456789012",
+                "notificationCreationTime": "2026-11-14T20:10:37.169Z",
+                "messageType": "ScheduledNotification",
+                "recordVersion": "1.0",
+            }
+        )
+
+        handler.lambda_handler(event, None)
+
+        mock_config_client.put_evaluations.assert_not_called()
+        mock_store.load_policy.assert_not_called()
+
     def test_lambda_handler_missing_required_field(self):
         """Test lambda handler fails when event is missing required field."""
         event = {"invokingEvent": "{}"}  # Missing other fields

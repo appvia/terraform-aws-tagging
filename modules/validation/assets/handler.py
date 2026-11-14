@@ -490,6 +490,22 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
 
     # Extract relevant information from the event
     invoking_event = json.loads(event.get("invokingEvent", "{}"))
+
+    # Periodic triggers (ScheduledNotification) carry no configuration item, only the
+    # account ID, so there is no resource to evaluate. Re-evaluating every resource in
+    # the account is not supported yet, so we acknowledge the trigger and return
+    # rather than failing the invocation (which AWS Config would retry).
+    if invoking_event.get("messageType") == "ScheduledNotification":
+        logger.info(
+            "Scheduled notification received, no configuration item to evaluate",
+            extra={
+                "action": "lambda_handler",
+                "account_id": invoking_event.get("awsAccountId"),
+                "config_rule_name": event.get("configRuleName"),
+            },
+        )
+        return
+
     configuration_item = invoking_event.get("configurationItem", {})
     resource = Resource.parse(configuration_item)
 
