@@ -16,7 +16,6 @@ run "basic" {
     lambda_name           = "tagging-compliance-evaluator"
     lambda_runtime        = "python3.12"
     mappings_version      = "mappings-hash"
-    policy_bucket_arn     = "arn:aws:s3:::tagging-compliance"
     policy_bucket_name    = "tagging-compliance"
     policy_version        = "policy-hash"
   }

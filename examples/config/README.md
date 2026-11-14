@@ -47,7 +47,6 @@ module "config" {
 
   # Reference central S3 policy bucket (typically in management account)
   policy_bucket_name = "tagging-compliance-config"
-  policy_bucket_arn  = "arn:aws:s3:::tagging-compliance-config"
   policy_key         = "policy.yaml"
   policy_version     = module.tagging.policy_version
   mappings_key       = "mappings.yaml"
@@ -102,7 +101,6 @@ module "config" {
   source = "../../modules/config"
 
   policy_bucket_name = "org-tagging-compliance"
-  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
   policy_version     = "abc123..."
   mappings_version   = "def456..."
   config_resource_types = ["AWS::S3::Bucket"]
@@ -117,7 +115,6 @@ module "config" {
 
   # S3 bucket with tagging policy (typically in management account)
   policy_bucket_name = "org-tagging-compliance"
-  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
   policy_key         = "policy.yaml"
   policy_version     = "abc123..."  # From root module output
   mappings_key       = "mappings.yaml"

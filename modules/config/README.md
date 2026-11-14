@@ -72,7 +72,6 @@ module "config_tagging_compliance" {
 
   # S3 bucket containing tagging policy and mappings
   policy_bucket_name = "org-tagging-compliance"
-  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
   policy_key         = "policy.yaml"
   policy_version     = "abc123..."  # From root module output
   mappings_key       = "mappings.yaml"
@@ -207,7 +206,6 @@ module "config_tagging_compliance" {
   source = "./modules/config"
 
   policy_bucket_name = data.aws_s3_bucket.policy_bucket.id
-  policy_bucket_arn  = data.aws_s3_bucket.policy_bucket.arn
   policy_key         = "policy.yaml"
   policy_version     = var.policy_version  # Pass from root module output
   mappings_key       = "mappings.yaml"
@@ -353,16 +351,15 @@ View compliance status directly in the AWS Config console:
 ## Providers
 
 | Name | Version |
-| ---- | ------- |
+|------|---------|
 | <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0.0 |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-| ---- | ----------- | ---- | ------- | :------: |
+|------|-------------|------|---------|:--------:|
 | <a name="input_config_resource_types"></a> [config\_resource\_types](#input\_config\_resource\_types) | List of AWS resource types to evaluate (https://docs.aws.amazon.com/config/latest/developerguide/resource-config-reference.html) | `list(string)` | n/a | yes |
 | <a name="input_mappings_version"></a> [mappings\_version](#input\_mappings\_version) | A hash of the mappings content (root module output mappings\_version). Changing it forces AWS Config to re-evaluate all resources. | `string` | n/a | yes |
-| <a name="input_policy_bucket_arn"></a> [policy\_bucket\_arn](#input\_policy\_bucket\_arn) | The ARN of the S3 bucket holding the tagging policy, mappings and inventory. | `string` | n/a | yes |
 | <a name="input_policy_bucket_name"></a> [policy\_bucket\_name](#input\_policy\_bucket\_name) | The name of the S3 bucket holding the tagging policy, mappings and inventory. | `string` | n/a | yes |
 | <a name="input_policy_version"></a> [policy\_version](#input\_policy\_version) | A hash of the tagging policy content (root module output policy\_version). Changing it forces AWS Config to re-evaluate all resources. | `string` | n/a | yes |
 | <a name="input_accounts_key"></a> [accounts\_key](#input\_accounts\_key) | The object key of the account inventory in the policy bucket. When null, no inventory is read and organizational\_path/account\_tag rules are ignored. | `string` | `null` | no |
@@ -393,7 +390,7 @@ View compliance status directly in the AWS Config console:
 ## Outputs
 
 | Name | Description |
-| ---- | ----------- |
+|------|-------------|
 | <a name="output_config_arn"></a> [config\_arn](#output\_config\_arn) | The ARN of the AWS Config rule for tagging compliance. |
 | <a name="output_lambda_arn"></a> [lambda\_arn](#output\_lambda\_arn) | The ARN of the Lambda function for tagging compliance. |
 <!-- END_TF_DOCS -->

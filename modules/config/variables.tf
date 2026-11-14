@@ -139,11 +139,6 @@ variable "mappings_version" {
   type        = string
 }
 
-variable "policy_bucket_arn" {
-  description = "The ARN of the S3 bucket holding the tagging policy, mappings and inventory."
-  type        = string
-}
-
 variable "policy_bucket_name" {
   description = "The name of the S3 bucket holding the tagging policy, mappings and inventory."
   type        = string

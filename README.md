@@ -237,7 +237,6 @@ module "tagging_compliance_evaluator" {
 
   # Reference the central S3 policy bucket (cross-account)
   policy_bucket_name = "org-tagging-compliance"
-  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
   policy_key         = "policy.yaml"
   policy_version     = "<policy-sha256>"  # From root module output
   mappings_key       = "mappings.yaml"
@@ -391,7 +390,6 @@ module "tagging_evaluator" {
 
   # Reference the central S3 policy bucket
   policy_bucket_name = "org-tagging-compliance"
-  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
   policy_key         = "policy.yaml"
   policy_version     = "abc123..."  # From management account output
   mappings_key       = "mappings.yaml"
@@ -435,7 +433,6 @@ module "tagging_evaluator" {
 
   # Reference the central S3 policy bucket
   policy_bucket_name = "org-tagging-compliance"
-  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
   policy_key         = "policy.yaml"
   policy_version     = "abc123..."  # From management account output
   mappings_key       = "mappings.yaml"
@@ -568,7 +565,6 @@ module "tagging_config" {
   source = "appvia/tagging/aws//modules/config"
 
   policy_bucket_name = "org-tagging-compliance"
-  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
   policy_key         = "policy.yaml"
   policy_version     = "abc123..."
   mappings_key       = "mappings.yaml"
@@ -650,7 +646,6 @@ module "tagging_config_prod" {
   source = "appvia/tagging/aws//modules/config"
 
   policy_bucket_name = "org-tagging-compliance"
-  policy_bucket_arn  = "arn:aws:s3:::org-tagging-compliance"
   policy_key         = "policy.yaml"
   policy_version     = "abc123..."
   mappings_key       = "mappings.yaml"
@@ -791,7 +786,6 @@ module "config" {
 module "config" {
   source = "appvia/tagging/aws//modules/config"
   policy_bucket_name = module.tagging.bucket_name
-  policy_bucket_arn  = module.tagging.bucket_arn
   policy_key         = module.tagging.policy_key
   policy_version     = module.tagging.policy_version
   mappings_key       = module.tagging.mappings_key

@@ -23,7 +23,6 @@ module "config" {
 
   ## Policy bucket outputs
   policy_bucket_name = module.tagging.bucket_name
-  policy_bucket_arn  = module.tagging.bucket_arn
   policy_key         = module.tagging.policy_key
   policy_version     = module.tagging.policy_version
   mappings_key       = module.tagging.mappings_key

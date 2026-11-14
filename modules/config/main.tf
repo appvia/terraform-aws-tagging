@@ -19,7 +19,7 @@ module "lambda_function" {
   lambda_runtime                    = var.lambda_runtime
   lambda_timeout                    = var.lambda_timeout
   mappings_key                      = var.mappings_key
-  policy_bucket_arn                 = var.policy_bucket_arn
+  policy_bucket_arn                 = local.policy_bucket_arn
   policy_bucket_name                = var.policy_bucket_name
   policy_key                        = var.policy_key
   rules_cache_enabled               = var.rules_cache_enabled
