@@ -90,7 +90,7 @@ Each module follows the same pattern:
 
 ### Lambda Handler (Python)
 - **Validation Lambda**: `modules/validation/assets/handler.py`
-  - Runtime: Python 3.12
+  - Runtime: Python 3.14
   - Entry point: `lambda_handler(event, context)`
   - Dependencies: `policy.py` (parser), `engine.py` (evaluator), `store.py` (S3 caching)
   - Tests: `modules/validation/assets/handler_test.py`, `policy_test.py`, `engine_test.py`, `store_test.py`

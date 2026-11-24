@@ -2,10 +2,10 @@ mock_provider "aws" {
   source = "./tests/mock"
 }
 
-## Build the lambda against the python shipped on the CI runners (python3.14 is not available)
+## Build the lambda against the python shipped on the CI runners
 variables {
   deploy_organization_wide = true
-  lambda_runtime           = "python3.12"
+  lambda_runtime           = "python3.14"
   mappings_version         = "mappings-hash"
   policy_bucket_arn        = "arn:aws:s3:::tagging-compliance"
   policy_bucket_name       = "tagging-compliance"
