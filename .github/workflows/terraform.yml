@@ -57,6 +57,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install Dependencies
         run: |
+          python --version
+          python3.12 --version
+          which python3.12
           pip3 install pytest boto3 -r modules/validation/assets/requirements.txt -r modules/organizations/assets/requirements.txt
       - name: Run unit tests
         env:
