@@ -51,7 +51,7 @@ module "organizations_inventory" {
   # Lambda configuration
   lambda_name        = "organizations-account-inventory"
   lambda_description = "Synchronizes AWS Organizations account information to S3"
-  lambda_runtime     = "python3.12"
+  lambda_runtime     = "python3.14"
   lambda_timeout     = 60
   lambda_memory_size = 128
   lambda_log_level   = "INFO"
@@ -323,7 +323,7 @@ The conformance pack permissions enable the Lambda to re-put the organization co
 | <a name="input_lambda_log_level"></a> [lambda\_log\_level](#input\_lambda\_log\_level) | The log level for the Lambda function. Valid values are DEBUG, INFO, WARNING, ERROR, CRITICAL. | `string` | `"INFO"` | no |
 | <a name="input_lambda_memory_size"></a> [lambda\_memory\_size](#input\_lambda\_memory\_size) | The amount of memory in MB allocated to the Lambda function. | `number` | `128` | no |
 | <a name="input_lambda_name"></a> [lambda\_name](#input\_lambda\_name) | The name of the Lambda function to synchronize AWS Organizations account information. | `string` | `"organizations-account-inventory"` | no |
-| <a name="input_lambda_runtime"></a> [lambda\_runtime](#input\_lambda\_runtime) | The runtime environment for the Lambda function. | `string` | `"python3.12"` | no |
+| <a name="input_lambda_runtime"></a> [lambda\_runtime](#input\_lambda\_runtime) | The runtime environment for the Lambda function. | `string` | `"python3.14"` | no |
 | <a name="input_lambda_timeout"></a> [lambda\_timeout](#input\_lambda\_timeout) | The timeout for the Lambda function in seconds. | `number` | `60` | no |
 | <a name="input_scheduled_sync_expression"></a> [scheduled\_sync\_expression](#input\_scheduled\_sync\_expression) | EventBridge schedule expression for periodic sync (e.g., rate(1 day), cron(0 2 * * ? *)). | `string` | `"rate(1 day)"` | no |
 | <a name="input_scheduled_sync_rule_name"></a> [scheduled\_sync\_rule\_name](#input\_scheduled\_sync\_rule\_name) | Name of the EventBridge rule used for scheduled syncs. | `string` | `"organizations-account-inventory-schedule"` | no |
